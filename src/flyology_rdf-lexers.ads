@@ -59,7 +59,28 @@ package Flyology_RDF.Lexers is
       Close_Triple_Term_Token,  --  )>>
       Reifier_Token,            --  ~
       Open_Annotation_Token,    --  {|
-      Close_Annotation_Token);  --  |}
+      Close_Annotation_Token,   --  |}
+
+      --  Notation3, recognised only in N3_Dialect
+      Variable_Token,           --  ?name
+      Implies_Token,            --  =>
+      Implied_By_Token,         --  <=
+      Equals_Token,             --  =
+      Forward_Path_Token,       --  !
+      Backward_Path_Token,      --  ^
+      For_All_Token,            --  @forAll
+      For_Some_Token);          --  @forSome
+
+   --  Which token vocabulary to recognise.
+   --
+   --  The RDF grammars must not see an N3 token: a scanner that always
+   --  produced them would make "=>" a token that the Turtle parser has to
+   --  reject by name rather than by not knowing it, and the difference
+   --  shows up the first time someone writes a prefixed name that happens
+   --  to contain one.
+   --  @enum RDF_Dialect Turtle, TriG, N-Triples, N-Quads
+   --  @enum N3_Dialect Adds variables, implication, paths, quantifiers
+   type Dialect_Kind is (RDF_Dialect, N3_Dialect);
 
    --  Direction carried by a Direction_Token.
    type Direction_Value is (Left_To_Right, Right_To_Left);
@@ -161,6 +182,7 @@ package Flyology_RDF.Lexers is
    --  @param Result The scanned token, meaningful only when Token_Found
    --  @param Status Outcome of the scan
    --  @param Error Why the scan failed, No_Error otherwise
+   --  @param Dialect Token vocabulary to recognise
    procedure Scan
      (Text       : String;
       Position   : in out Parser_Cursors.Cursor_State;
@@ -168,7 +190,8 @@ package Flyology_RDF.Lexers is
       Last_Chunk : Boolean;
       Result     : out Token;
       Status     : out Scan_Status;
-      Error      : out Scan_Error_Kind);
+      Error      : out Scan_Error_Kind;
+      Dialect    : Dialect_Kind := RDF_Dialect);
 
    --  A token that carries no text, used where a Token is needed before one
    --  has been scanned.

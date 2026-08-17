@@ -199,7 +199,8 @@ package body Flyology_RDF.Lexers is
       Last_Chunk : Boolean;
       Result     : out Token;
       Status     : out Scan_Status;
-      Error      : out Scan_Error_Kind)
+      Error      : out Scan_Error_Kind;
+      Dialect    : Dialect_Kind := RDF_Dialect)
    is
       --  Working position, committed back to the caller only on success.
       Walk_Position : Cursors.Cursor_State := Position;
@@ -855,6 +856,12 @@ package body Flyology_RDF.Lexers is
             elsif Word = "base" then
                Emit (Base_Directive_Token);
                return;
+            elsif Dialect = N3_Dialect and then Word = "forAll" then
+               Emit (For_All_Token);
+               return;
+            elsif Dialect = N3_Dialect and then Word = "forSome" then
+               Emit (For_Some_Token);
+               return;
             end if;
          end;
 
@@ -1141,7 +1148,12 @@ package body Flyology_RDF.Lexers is
                Fail (Invalid_Encoding);
                return;
             end if;
-            if Scalar = 16#3C# then           --  '<<'
+            if Scalar = 16#3D# and then Dialect = N3_Dialect then
+               --  '<=' cannot begin an IRI, because a scheme must start
+               --  with a letter, so this needs no backtracking.
+               Step (Scalar, Length);
+               Emit (Implied_By_Token);
+            elsif Scalar = 16#3C# then           --  '<<'
                Step (Scalar, Length);
                Peek_Token_End (Walk_Index, Scalar, Length, Look);
                if Look = Partial or else Look = Exhausted then
@@ -1197,16 +1209,22 @@ package body Flyology_RDF.Lexers is
             Step (Scalar, Length);
             Scan_At_Sign;
 
-         when 16#5E# =>                       --  '^'
+         when 16#5E# =>                       --  '^' or '^^'
             Step (Scalar, Length);
-            Peek (Text, Walk_Index, Scalar, Length, Look);
+            --  A lone caret is a whole token in N3, so the end of the
+            --  buffer may legitimately follow it.
+            Peek_Token_End (Walk_Index, Scalar, Length, Look);
             if Look = Partial or else Look = Exhausted then
-               Want_More;
+               Incomplete;
                return;
             elsif Look = Bad then
                Fail (Invalid_Encoding);
                return;
             elsif Scalar /= 16#5E# then
+               if Dialect = N3_Dialect then
+                  Emit (Backward_Path_Token);
+                  return;
+               end if;
                Fail (Unexpected_Character);
                return;
             end if;
@@ -1337,6 +1355,64 @@ package body Flyology_RDF.Lexers is
             end if;
             Step (Scalar, Length);
             Emit (Close_Annotation_Token);
+
+         when 16#3F# =>                       --  '?' -- a variable
+            if Dialect /= N3_Dialect then
+               Fail (Unexpected_Character);
+               return;
+            end if;
+            Step (Scalar, Length);
+            declare
+               Length_Seen : Natural := 0;
+            begin
+               loop
+                  Peek_Token_End (Walk_Index, Scalar, Length, Look);
+                  if Look = Partial or else Look = Exhausted then
+                     Incomplete;
+                     return;
+                  elsif Look = Bad then
+                     Fail (Invalid_Encoding);
+                     return;
+                  end if;
+                  exit when not Is_PN_Chars (Scalar);
+                  Append_Scalar (Buffer, Scalar);
+                  Step (Scalar, Length);
+                  Length_Seen := Length_Seen + 1;
+               end loop;
+               if Length_Seen = 0 then
+                  Fail (Unexpected_Character);
+                  return;
+               end if;
+            end;
+            Emit (Variable_Token);
+
+         when 16#3D# =>                       --  '=' or '=>'
+            if Dialect /= N3_Dialect then
+               Fail (Unexpected_Character);
+               return;
+            end if;
+            Step (Scalar, Length);
+            Peek_Token_End (Walk_Index, Scalar, Length, Look);
+            if Look = Partial or else Look = Exhausted then
+               Incomplete;
+               return;
+            elsif Look = Bad then
+               Fail (Invalid_Encoding);
+               return;
+            elsif Scalar = 16#3E# then
+               Step (Scalar, Length);
+               Emit (Implies_Token);
+            else
+               Emit (Equals_Token);
+            end if;
+
+         when 16#21# =>                       --  '!'
+            if Dialect /= N3_Dialect then
+               Fail (Unexpected_Character);
+               return;
+            end if;
+            Step (Scalar, Length);
+            Emit (Forward_Path_Token);
 
          when others =>
             if Is_PN_Chars_Base (Scalar) then

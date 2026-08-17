@@ -84,7 +84,8 @@ procedure Lexer_Tests is
       Last_Chunk  : Boolean;
       Rendering   : out Unbounded.Unbounded_String;
       Final       : out Lexers.Scan_Status;
-      Final_Error : out Lexers.Scan_Error_Kind)
+      Final_Error : out Lexers.Scan_Error_Kind;
+      Dialect     : Lexers.Dialect_Kind := Lexers.RDF_Dialect)
    is
       Position : Cursors.Cursor_State := Cursors.Initial_State;
       Index    : Positive := Text'First;
@@ -95,7 +96,8 @@ procedure Lexer_Tests is
       Rendering := Unbounded.Null_Unbounded_String;
       loop
          Lexers.Scan
-           (Text, Position, Index, Last_Chunk, Result, Status, Error);
+           (Text, Position, Index, Last_Chunk, Result, Status, Error,
+            Dialect);
          exit when Status /= Lexers.Token_Found;
          Unbounded.Append (Rendering, Rendered (Result));
          Unbounded.Append (Rendering, " ");
@@ -104,14 +106,22 @@ procedure Lexer_Tests is
       Final_Error := Error;
    end Tokenize;
 
-   function Scan_Of (Text : String) return String is
+   function Scan_Of
+     (Text    : String;
+      Dialect : Lexers.Dialect_Kind := Lexers.RDF_Dialect) return String
+   is
       Rendering : Unbounded.Unbounded_String;
       Final     : Lexers.Scan_Status;
       Error     : Lexers.Scan_Error_Kind;
    begin
-      Tokenize (Text, True, Rendering, Final, Error);
+      Tokenize (Text, True, Rendering, Final, Error, Dialect);
       return Unbounded.To_String (Rendering);
    end Scan_Of;
+
+   procedure Check_N3 (Text, Expected, Label : String) is
+   begin
+      Check_Equal (Scan_Of (Text, Lexers.N3_Dialect), Expected, Label);
+   end Check_N3;
 
    procedure Check_Scan (Text, Expected, Label : String) is
    begin
@@ -355,6 +365,38 @@ begin
       & Character'Val (16#F0#) & Character'Val (16#9F#)
       & Character'Val (16#98#) & Character'Val (16#80#) & """ .",
       "a four-byte scalar inside a literal");
+
+   ------------------------------------------------------------------
+   --  The N3 dialect adds tokens; the RDF dialect must not see them
+   ------------------------------------------------------------------
+   Check_N3 ("?x", "VARIABLE_TOKEN ", "a variable");
+   Check_N3 ("?longName", "VARIABLE_TOKEN ", "a longer variable");
+   Check_N3 ("=>", "IMPLIES_TOKEN ", "implication");
+   Check_N3 ("<=", "IMPLIED_BY_TOKEN ", "reverse implication");
+   Check_N3 ("=", "EQUALS_TOKEN ", "equality");
+   Check_N3 ("!", "FORWARD_PATH_TOKEN ", "a forward path");
+   Check_N3 ("^", "BACKWARD_PATH_TOKEN ", "a backward path");
+   Check_N3 ("^^", "DATATYPE_TOKEN ",
+             "the datatype marker still wins over a single caret");
+   Check_N3 ("@forAll", "FOR_ALL_TOKEN ", "universal quantification");
+   Check_N3 ("@forSome", "FOR_SOME_TOKEN ", "existential quantification");
+   Check_N3 ("{ ?x }", "OPEN_BRACE_TOKEN VARIABLE_TOKEN CLOSE_BRACE_TOKEN ",
+             "a formula");
+
+   --  '<=' must not be read as the start of an IRI, and an IRI must still
+   --  scan: a scheme cannot begin with '=', so the two never overlap.
+   Check_N3 ("<http://example.org/a>",
+             "IRI_REFERENCE_TOKEN(http://example.org/a) ",
+             "an IRI still scans in the N3 dialect");
+
+   Check_Rejects ("?x", Lexers.Unexpected_Character,
+                  "a variable is not an RDF token");
+   Check_Rejects ("=>", Lexers.Unexpected_Character,
+                  "implication is not an RDF token");
+   Check_Rejects ("!", Lexers.Unexpected_Character,
+                  "a forward path is not an RDF token");
+   Check_Rejects ("^x", Lexers.Unexpected_Character,
+                  "a lone caret is not an RDF token");
 
    IO.Put_Line ("  checks              " & Checks'Image);
    IO.Put_Line ("  failures            " & Failures'Image);
