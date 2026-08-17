@@ -12,6 +12,7 @@ package body Flyology_SPARQL.Parsers is
 
    use type Lexers.Scan_Status;
    use type Lexers.Token_Kind;
+   use type Lexers.String_Form;
    use type Syntax.Node_Kind;
    use type Syntax.Node_Reference;
 
@@ -590,19 +591,34 @@ package body Flyology_SPARQL.Parsers is
       --  a collection, a property list, or a reified triple names
       --  something and states triples about it at the same time, so the
       --  group being built has to be reachable from here.
+      --  Quoted marks the positions inside << >> and <<( )>>, which are
+      --  narrower than a pattern term in general: no collection, no
+      --  property list with content, and no path as the predicate.
       function Parse_Pattern_Term
-        (Into : Syntax.Node_Reference) return Syntax.Node_Reference;
+        (Into   : Syntax.Node_Reference;
+         Quoted : Boolean := False) return Syntax.Node_Reference;
+
+      --  A predicate that is a real path rather than a plain term. An
+      --  annotation may not attach to one, and a quoted triple may not
+      --  carry one.
+      function Is_Path (Node : Syntax.Node_Reference) return Boolean
+      is (Syntax.Kind (Syntax.To_Query (Tree), Node)
+          in Syntax.Unary_Node | Syntax.Arithmetic_Node);
 
       procedure Parse_Predicate_Objects
         (Into    : Syntax.Node_Reference;
          Subject : Syntax.Node_Reference);
 
       function Parse_Pattern_Term
-        (Into : Syntax.Node_Reference) return Syntax.Node_Reference is
+        (Into   : Syntax.Node_Reference;
+         Quoted : Boolean := False) return Syntax.Node_Reference is
       begin
          case Peek is
             when Lexers.Open_Bracket_Token =>
                Advance;
+               if Quoted and then Peek /= Lexers.Close_Bracket_Token then
+                  Fail ("a property list is not admitted here");
+               end if;
                declare
                   Subject : constant Syntax.Node_Reference := Fresh_Blank;
                begin
@@ -614,6 +630,9 @@ package body Flyology_SPARQL.Parsers is
                end;
 
             when Lexers.Open_Paren_Token =>
+               if Quoted then
+                  Fail ("a collection is not admitted here");
+               end if;
                --  A collection: rdf:first and rdf:rest all the way down,
                --  with the empty one being rdf:nil.
                Advance;
@@ -694,9 +713,18 @@ package body Flyology_SPARQL.Parsers is
                   Result : constant Syntax.Node_Reference :=
                     Node (Syntax.Triple_Term_Node);
                begin
-                  Syntax.Add_Child (Tree, Result, Parse_Pattern_Term (Into));
-                  Syntax.Add_Child (Tree, Result, Parse_Path);
-                  Syntax.Add_Child (Tree, Result, Parse_Pattern_Term (Into));
+                  Syntax.Add_Child
+                    (Tree, Result, Parse_Pattern_Term (Into, Quoted => True));
+                  declare
+                     Predicate : constant Syntax.Node_Reference := Parse_Path;
+                  begin
+                     if Is_Path (Predicate) then
+                        Fail ("a triple term admits no property path");
+                     end if;
+                     Syntax.Add_Child (Tree, Result, Predicate);
+                  end;
+                  Syntax.Add_Child
+                    (Tree, Result, Parse_Pattern_Term (Into, Quoted => True));
                   Expect (Lexers.Close_Triple_Term_Token,
                           "a triple term terminator");
                   return Result;
@@ -710,9 +738,18 @@ package body Flyology_SPARQL.Parsers is
                   Result : constant Syntax.Node_Reference :=
                     Node (Syntax.Reified_Node);
                begin
-                  Syntax.Add_Child (Tree, Result, Parse_Pattern_Term (Into));
-                  Syntax.Add_Child (Tree, Result, Parse_Path);
-                  Syntax.Add_Child (Tree, Result, Parse_Pattern_Term (Into));
+                  Syntax.Add_Child
+                    (Tree, Result, Parse_Pattern_Term (Into, Quoted => True));
+                  declare
+                     Predicate : constant Syntax.Node_Reference := Parse_Path;
+                  begin
+                     if Is_Path (Predicate) then
+                        Fail ("a quoted triple admits no property path");
+                     end if;
+                     Syntax.Add_Child (Tree, Result, Predicate);
+                  end;
+                  Syntax.Add_Child
+                    (Tree, Result, Parse_Pattern_Term (Into, Quoted => True));
                   if Peek = Lexers.Reifier_Token then
                      Advance;
                      if Peek in Lexers.IRI_Reference_Token
@@ -794,6 +831,13 @@ package body Flyology_SPARQL.Parsers is
                      Syntax.Add_Child
                        (Tree, Triple, Parse_Pattern_Term (Into));
                      Syntax.Add_Child (Tree, Into, Triple);
+                     if Peek in Lexers.Reifier_Token
+                              | Lexers.Open_Annotation_Token
+                       and then Is_Path (Predicate)
+                     then
+                        Fail ("an annotation cannot attach to a triple"
+                              & " whose predicate is a property path");
+                     end if;
                      Parse_Annotation (Into, Triple);
                   end;
                   exit when Peek /= Lexers.Comma_Token;
@@ -816,12 +860,25 @@ package body Flyology_SPARQL.Parsers is
       begin
          loop
             declare
+               --  A term may stand without predicates only if reading it
+               --  stated something: a property list carrying predicates, a
+               --  non-empty collection, or a reified triple. A plain node,
+               --  an empty list, a bare "[]" and a triple term all state
+               --  nothing, and a pattern made only of them is not a
+               --  pattern. Counting what reading it contributed answers
+               --  all six cases at once.
+               Before  : constant Natural :=
+                 Syntax.Child_Count (Syntax.To_Query (Tree), Into);
                Subject : constant Syntax.Node_Reference :=
                  Parse_Pattern_Term (Into);
             begin
-               --  A property list or reified triple may stand alone.
-               if Peek not in Lexers.Dot_Token | Lexers.Close_Brace_Token
-               then
+               if Peek in Lexers.Dot_Token | Lexers.Close_Brace_Token then
+                  if Syntax.Child_Count (Syntax.To_Query (Tree), Into)
+                     = Before
+                  then
+                     Fail ("this term states nothing on its own");
+                  end if;
+               else
                   Parse_Predicate_Objects (Into, Subject);
                end if;
             end;
@@ -1107,6 +1164,10 @@ package body Flyology_SPARQL.Parsers is
                Advance;
                if Peek /= Lexers.String_Token then
                   Fail ("expected a version string");
+               elsif Lexers.Form (Current) = Lexers.Long_Quoted then
+                  --  A version is a short-quoted string, as it is in
+                  --  Turtle.
+                  Fail ("a version must be a short-quoted string");
                end if;
                Syntax.Set_Version (Tree, Lexers.Text (Current));
                Advance;
