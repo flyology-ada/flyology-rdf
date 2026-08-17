@@ -1530,6 +1530,125 @@ package body Flyology_SPARQL.Parsers is
             end;
          end if;
 
+         --  Aggregates: fixed arity, and never one inside another.
+         declare
+            function Is_Aggregate (Name : String) return Boolean
+            is (Upper (Name) in "COUNT" | "SUM" | "MIN" | "MAX" | "AVG"
+                              | "SAMPLE" | "GROUP_CONCAT");
+
+            --  DISTINCT and SEPARATOR ride along as marker children and
+            --  are not arguments.
+            function Argument_Count
+              (Node : Syntax.Node_Reference) return Natural
+            is
+               Total : Natural := 0;
+            begin
+               for Index in 1 .. Syntax.Child_Count (Query_Value, Node) loop
+                  declare
+                     Item : constant Syntax.Node_Reference :=
+                       Syntax.Child (Query_Value, Node, Index);
+                  begin
+                     if Syntax.Kind (Query_Value, Item) /= Syntax.Call_Node
+                       or else Syntax.Text (Query_Value, Item)
+                               not in "DISTINCT" | "SEPARATOR"
+                     then
+                        Total := Total + 1;
+                     end if;
+                  end;
+               end loop;
+               return Total;
+            end Argument_Count;
+
+            procedure Check_Aggregates
+              (Node   : Syntax.Node_Reference;
+               Inside : Boolean)
+            is
+               Here : Boolean := Inside;
+            begin
+               if Node = Syntax.No_Node then
+                  return;
+               end if;
+
+               if Syntax.Kind (Query_Value, Node) = Syntax.Call_Node
+                 and then Is_Aggregate (Syntax.Text (Query_Value, Node))
+               then
+                  if Inside then
+                     Complain ("an aggregate cannot contain another");
+                  end if;
+                  Here := True;
+
+                  declare
+                     Name  : constant String :=
+                       Upper (Syntax.Text (Query_Value, Node));
+                     Count : constant Natural := Argument_Count (Node);
+                  begin
+                     if Name = "GROUP_CONCAT" then
+                        if Count /= 1 then
+                           Complain ("GROUP_CONCAT takes one expression");
+                        end if;
+                     elsif Count /= 1 then
+                        Complain
+                          (Name & " takes exactly one argument, not"
+                           & Count'Image);
+                     end if;
+                  end;
+               end if;
+
+               for Index in 1 .. Syntax.Child_Count (Query_Value, Node) loop
+                  Check_Aggregates
+                    (Syntax.Child (Query_Value, Node, Index), Here);
+               end loop;
+            end Check_Aggregates;
+         begin
+            Check_Aggregates (Syntax.Projection (Query_Value), False);
+            Check_Aggregates (Syntax.Having (Query_Value), False);
+            Check_Aggregates (Syntax.Order_By (Query_Value), False);
+         end;
+
+         --  With GROUP BY, a bare projected variable has to be one of the
+         --  grouping keys: nothing else survives the grouping.
+         if Syntax.Group_By (Query_Value) /= Syntax.No_Node
+           and then Syntax.Projection (Query_Value) /= Syntax.No_Node
+         then
+            declare
+               Keys : String_Sets.Set;
+               List : constant Syntax.Node_Reference :=
+                 Syntax.Group_By (Query_Value);
+               Items : constant Syntax.Node_Reference :=
+                 Syntax.Projection (Query_Value);
+            begin
+               for Index in 1 .. Syntax.Child_Count (Query_Value, List) loop
+                  declare
+                     Key : constant Syntax.Node_Reference :=
+                       Syntax.Child (Query_Value, List, Index);
+                  begin
+                     if Syntax.Kind (Query_Value, Key)
+                        = Syntax.Variable_Node
+                     then
+                        Keys.Include (Syntax.Text (Query_Value, Key));
+                     end if;
+                  end;
+               end loop;
+
+               for Index in 1 .. Syntax.Child_Count (Query_Value, Items) loop
+                  declare
+                     Item : constant Syntax.Node_Reference :=
+                       Syntax.Child (Query_Value, Items, Index);
+                  begin
+                     if Syntax.Kind (Query_Value, Item)
+                        = Syntax.Variable_Node
+                       and then not Keys.Contains
+                                      (Syntax.Text (Query_Value, Item))
+                     then
+                        Complain
+                          ("?" & Syntax.Text (Query_Value, Item)
+                           & " is projected but is not a grouping key");
+                     end if;
+                  end;
+               end loop;
+            end;
+         end if;
+
          --  GROUP BY replaces the solution's variables, so "*" has nothing
          --  left to mean.
          if Syntax.Group_By (Query_Value) /= Syntax.No_Node
