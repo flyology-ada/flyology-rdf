@@ -69,7 +69,21 @@ package Flyology_RDF.Lexers is
       Forward_Path_Token,       --  !
       Backward_Path_Token,      --  ^
       For_All_Token,            --  @forAll
-      For_Some_Token);          --  @forSome
+      For_Some_Token,           --  @forSome
+
+      --  SPARQL, recognised only in SPARQL_Dialect
+      Keyword_Token,            --  SELECT, WHERE, FILTER, ...
+      Or_Token,                 --  ||
+      And_Token,                --  &&
+      Not_Equal_Token,          --  !=
+      Less_Token,               --  <
+      Greater_Token,            --  >
+      Less_Or_Equal_Token,      --  <=
+      Greater_Or_Equal_Token,   --  >=
+      Plus_Token,               --  +
+      Minus_Token,              --  -
+      Star_Token,               --  *
+      Slash_Token);             --  /
 
    --  Which token vocabulary to recognise.
    --
@@ -80,7 +94,8 @@ package Flyology_RDF.Lexers is
    --  to contain one.
    --  @enum RDF_Dialect Turtle, TriG, N-Triples, N-Quads
    --  @enum N3_Dialect Adds variables, implication, paths, quantifiers
-   type Dialect_Kind is (RDF_Dialect, N3_Dialect);
+   --  @enum SPARQL_Dialect Adds variables, operators, and bare keywords
+   type Dialect_Kind is (RDF_Dialect, N3_Dialect, SPARQL_Dialect);
 
    --  Direction carried by a Direction_Token.
    type Direction_Value is (Left_To_Right, Right_To_Left);

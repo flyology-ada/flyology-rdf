@@ -29,3 +29,11 @@ __pycache__/
 /n3/tests/config/
 /n3/tests/obj/
 /n3/tests/bin/
+/sparql/alire/
+/sparql/config/
+/sparql/obj/
+/sparql/lib/
+/sparql/tests/alire/
+/sparql/tests/config/
+/sparql/tests/obj/
+/sparql/tests/bin/

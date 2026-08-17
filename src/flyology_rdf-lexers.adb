@@ -1054,6 +1054,12 @@ package body Flyology_RDF.Lexers is
                Emit (Graph_Token);
             elsif Upper = "VERSION" then
                Emit (Version_Directive_Token);
+            elsif Dialect = SPARQL_Dialect then
+               --  SPARQL has around a hundred keywords and they are not
+               --  reserved. Classifying them here would put the language's
+               --  vocabulary in the scanner and make every addition a
+               --  scanner change, so the word is handed over as written.
+               Emit (Keyword_Token);
             else
                Fail (Unexpected_Character);
             end if;
@@ -1139,6 +1145,47 @@ package body Flyology_RDF.Lexers is
 
       case Scalar is
          when 16#3C# =>                       --  '<'
+            if Dialect = SPARQL_Dialect then
+               --  An IRI reference and the comparison operators share a
+               --  first character, and only the whole token tells them
+               --  apart, so this one place backtracks.
+               declare
+                  Saved_Position : constant Cursors.Cursor_State :=
+                    Walk_Position;
+                  Saved_Index    : constant Positive := Walk_Index;
+                  Next           : Scalar_Value;
+                  Next_Length    : Natural;
+                  Inner          : Peek_Status;
+               begin
+                  Step (Scalar, Length);
+                  Peek_Token_End (Walk_Index, Next, Next_Length, Inner);
+                  if Inner = Partial or else Inner = Exhausted then
+                     Incomplete;
+                     return;
+                  elsif Inner = Bad then
+                     Fail (Invalid_Encoding);
+                     return;
+                  elsif Next = 16#3D# then
+                     Step (Next, Next_Length);
+                     Emit (Less_Or_Equal_Token);
+                     return;
+                  end if;
+
+                  --  Try the IRI. If it does not scan, the '<' was an
+                  --  operator after all.
+                  Scan_IRI_Reference;
+                  if Status = Token_Found
+                    or else Status = Needs_More_Input
+                  then
+                     return;
+                  end if;
+                  Walk_Position := Saved_Position;
+                  Walk_Index := Saved_Index;
+                  Step (16#3C#, 1);
+                  Emit (Less_Token);
+                  return;
+               end;
+            end if;
             Step (Scalar, Length);
             Peek (Text, Walk_Index, Scalar, Length, Look);
             if Look = Partial or else Look = Exhausted then
@@ -1221,7 +1268,7 @@ package body Flyology_RDF.Lexers is
                Fail (Invalid_Encoding);
                return;
             elsif Scalar /= 16#5E# then
-               if Dialect = N3_Dialect then
+               if Dialect /= RDF_Dialect then
                   Emit (Backward_Path_Token);
                   return;
                end if;
@@ -1232,6 +1279,35 @@ package body Flyology_RDF.Lexers is
             Emit (Datatype_Token);
 
          when 16#2B# | 16#2D# =>              --  '+' or '-'
+            if Dialect = SPARQL_Dialect then
+               declare
+                  Sign           : constant Scalar_Value := Scalar;
+                  Saved_Position : constant Cursors.Cursor_State :=
+                    Walk_Position;
+                  Saved_Index    : constant Positive := Walk_Index;
+                  Next           : Scalar_Value;
+                  Next_Length    : Natural;
+                  Inner          : Peek_Status;
+               begin
+                  Step (Scalar, Length);
+                  Peek_Token_End (Walk_Index, Next, Next_Length, Inner);
+                  if Inner = Partial or else Inner = Exhausted then
+                     Incomplete;
+                     return;
+                  elsif Inner = Bad then
+                     Fail (Invalid_Encoding);
+                     return;
+                  elsif not Is_Digit (Next) and then Next /= 16#2E# then
+                     Emit (if Sign = 16#2B# then Plus_Token
+                           else Minus_Token);
+                     return;
+                  end if;
+                  Walk_Position := Saved_Position;
+                  Walk_Index := Saved_Index;
+                  Scalar := Sign;
+                  Length := 1;
+               end;
+            end if;
             Append_Scalar (Buffer, Scalar);
             Step (Scalar, Length);
             Scan_Number (Signed => False);
@@ -1303,7 +1379,24 @@ package body Flyology_RDF.Lexers is
                Emit (Close_Paren_Token);
             end;
 
-         when 16#3E# =>                       --  '>>'
+         when 16#3E# =>                       --  '>>', '>' or '>='
+            if Dialect = SPARQL_Dialect then
+               Step (Scalar, Length);
+               Peek_Token_End (Walk_Index, Scalar, Length, Look);
+               if Look = Partial or else Look = Exhausted then
+                  Incomplete;
+                  return;
+               elsif Look = Bad then
+                  Fail (Invalid_Encoding);
+                  return;
+               elsif Scalar = 16#3D# then
+                  Step (Scalar, Length);
+                  Emit (Greater_Or_Equal_Token);
+               else
+                  Emit (Greater_Token);
+               end if;
+               return;
+            end if;
             Step (Scalar, Length);
             Peek (Text, Walk_Index, Scalar, Length, Look);
             if Look = Partial or else Look = Exhausted then
@@ -1340,24 +1433,10 @@ package body Flyology_RDF.Lexers is
 
          when 16#7D# => Step (Scalar, Length); Emit (Close_Brace_Token);
 
-         when 16#7C# =>                       --  '|}'
-            Step (Scalar, Length);
-            Peek (Text, Walk_Index, Scalar, Length, Look);
-            if Look = Partial or else Look = Exhausted then
-               Want_More;
-               return;
-            elsif Look = Bad then
-               Fail (Invalid_Encoding);
-               return;
-            elsif Scalar /= 16#7D# then
-               Fail (Unexpected_Character);
-               return;
-            end if;
-            Step (Scalar, Length);
-            Emit (Close_Annotation_Token);
-
-         when 16#3F# =>                       --  '?' -- a variable
-            if Dialect /= N3_Dialect then
+         when 16#3F# | 16#24# =>              --  '?' or '$' -- a variable
+            if Dialect = RDF_Dialect
+              or else (Scalar = 16#24# and then Dialect /= SPARQL_Dialect)
+            then
                Fail (Unexpected_Character);
                return;
             end if;
@@ -1387,8 +1466,12 @@ package body Flyology_RDF.Lexers is
             Emit (Variable_Token);
 
          when 16#3D# =>                       --  '=' or '=>'
-            if Dialect /= N3_Dialect then
+            if Dialect = RDF_Dialect then
                Fail (Unexpected_Character);
+               return;
+            elsif Dialect = SPARQL_Dialect then
+               Step (Scalar, Length);
+               Emit (Equals_Token);
                return;
             end if;
             Step (Scalar, Length);
@@ -1406,13 +1489,98 @@ package body Flyology_RDF.Lexers is
                Emit (Equals_Token);
             end if;
 
-         when 16#21# =>                       --  '!'
-            if Dialect /= N3_Dialect then
+         when 16#21# =>                       --  '!' or '!='
+            if Dialect = RDF_Dialect then
                Fail (Unexpected_Character);
                return;
             end if;
             Step (Scalar, Length);
+            if Dialect = SPARQL_Dialect then
+               Peek_Token_End (Walk_Index, Scalar, Length, Look);
+               if Look = Partial or else Look = Exhausted then
+                  Incomplete;
+                  return;
+               elsif Look = Bad then
+                  Fail (Invalid_Encoding);
+                  return;
+               elsif Scalar = 16#3D# then
+                  Step (Scalar, Length);
+                  Emit (Not_Equal_Token);
+                  return;
+               end if;
+            end if;
             Emit (Forward_Path_Token);
+
+         when 16#7C# =>                       --  '|}' or '||'
+            if Dialect = SPARQL_Dialect then
+               Step (Scalar, Length);
+               Peek_Token_End (Walk_Index, Scalar, Length, Look);
+               if Look = Partial or else Look = Exhausted then
+                  Incomplete;
+                  return;
+               elsif Look = Bad then
+                  Fail (Invalid_Encoding);
+                  return;
+               elsif Scalar = 16#7C# then
+                  Step (Scalar, Length);
+                  Emit (Or_Token);
+               else
+                  --  A single bar is the alternative operator in property
+                  --  paths, which reuses the forward-path token.
+                  Emit (Forward_Path_Token);
+               end if;
+               return;
+            end if;
+            Step (Scalar, Length);
+            Peek (Text, Walk_Index, Scalar, Length, Look);
+            if Look = Partial or else Look = Exhausted then
+               Want_More;
+               return;
+            elsif Look = Bad then
+               Fail (Invalid_Encoding);
+               return;
+            elsif Scalar /= 16#7D# then
+               Fail (Unexpected_Character);
+               return;
+            end if;
+            Step (Scalar, Length);
+            Emit (Close_Annotation_Token);
+
+         when 16#26# =>                       --  '&&'
+            if Dialect /= SPARQL_Dialect then
+               Fail (Unexpected_Character);
+               return;
+            end if;
+            Step (Scalar, Length);
+            Peek_Token_End (Walk_Index, Scalar, Length, Look);
+            if Look = Partial or else Look = Exhausted then
+               Incomplete;
+               return;
+            elsif Look = Bad then
+               Fail (Invalid_Encoding);
+               return;
+            elsif Scalar /= 16#26# then
+               Fail (Unexpected_Character);
+               return;
+            end if;
+            Step (Scalar, Length);
+            Emit (And_Token);
+
+         when 16#2A# =>                       --  '*'
+            if Dialect /= SPARQL_Dialect then
+               Fail (Unexpected_Character);
+               return;
+            end if;
+            Step (Scalar, Length);
+            Emit (Star_Token);
+
+         when 16#2F# =>                       --  '/'
+            if Dialect /= SPARQL_Dialect then
+               Fail (Unexpected_Character);
+               return;
+            end if;
+            Step (Scalar, Length);
+            Emit (Slash_Token);
 
          when others =>
             if Is_PN_Chars_Base (Scalar) then

@@ -1,0 +1,14 @@
+name = "flyology_sparql_tests"
+description = "Test programs for flyology_sparql"
+version = "0.1.0-dev"
+licenses = "MIT OR Apache-2.0"
+authors = ["Yurii Rashkovskii"]
+maintainers = ["Yurii Rashkovskii <yrashk@gmail.com>"]
+maintainers-logins = ["yrashk"]
+executables = ["sparql_tests"]
+
+[[depends-on]]
+flyology_sparql = "*"
+
+[[pins]]
+flyology_sparql = { path = ".." }
