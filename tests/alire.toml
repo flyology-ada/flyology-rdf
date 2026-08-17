@@ -15,6 +15,7 @@ executables = [
   "serialization_tests",
   "roundtrip_tests",
   "canonicalization_tests",
+  "codec_tests",
 ]
 
 [[depends-on]]
