@@ -81,21 +81,24 @@ not a verdict:
 | --- | --- | --- | --- | --- |
 | RDF 1.1 and 1.2 | 1050 | 14 | 10 | 4 |
 | Notation3 syntax | 149 | 2 | 3 | — |
-| SPARQL 1.1 syntax | 571 | 99 | 87 | — |
+| SPARQL 1.1 syntax | 488 | 22 | 81 | — |
 
 Corpora are pinned in `scripts/provision-oracles.sh`; the runs above are
 against those pins.
 
-Evaluation entries are counted as skipped, not passed: 811 SPARQL entries
-need a query engine and 148 N3 entries need a reasoner, and this crate has
-neither. RDF evaluation entries *are* run, and compared by RDFC-1.0
-canonical form rather than by blank node label.
+What cannot be graded is counted as skipped, not passed: 811 SPARQL
+evaluation entries need a query engine, 83 more are SPARQL Update rather
+than queries, and 148 N3 entries need a reasoner. RDF evaluation entries
+*are* run, and compared by RDFC-1.0 canonical form rather than by blank
+node label.
 
-SPARQL is the weak column and the numbers say so. The parser covers the four
-query forms, the pattern and expression grammars, property paths,
-subqueries, VALUES, EXISTS, dataset clauses, aggregates, and the RDF 1.2
-term syntax — but 87 malformed queries still get through, which is the
-harder half of the work and is not done.
+SPARQL reads what it claims to: the four query forms, the pattern and
+expression grammars, property paths, subqueries, VALUES, EXISTS, dataset
+clauses, aggregates, and the RDF 1.2 term syntax. Its weak column is the
+other one — 81 malformed queries still get through. Most are RDF 1.2
+restrictions on where a reifier or a list may appear, and well-formedness
+rules that sit outside the grammar; some of the latter are checked already,
+and the rest are the harder half of the work.
 
 ## Licence
 

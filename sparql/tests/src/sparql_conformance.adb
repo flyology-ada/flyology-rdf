@@ -61,6 +61,7 @@ procedure SPARQL_Conformance is
    Unexpected_Accept : Natural := 0;
    Unexpected_Reject : Natural := 0;
    Skipped_Evaluation : Natural := 0;
+   Skipped_Update     : Natural := 0;
    Skipped_Missing   : Natural := 0;
    Manifests_Read    : Natural := 0;
 
@@ -194,6 +195,16 @@ procedure SPARQL_Conformance is
             return;
          end if;
 
+         --  An update is not a query. Grading a .ru file against a query
+         --  parser measures nothing about the parser and quietly inflates
+         --  the divergence count with documents it was never meant to read.
+         if Path'Length > 3
+           and then Path (Path'Last - 2 .. Path'Last) = ".ru"
+         then
+            Skipped_Update := Skipped_Update + 1;
+            return;
+         end if;
+
          declare
             Text      : constant String := Read_File (Path);
             Succeeded : Boolean := True;
@@ -313,6 +324,7 @@ begin
    IO.Put_Line ("    negative syntax   " & Negative_Syntax'Image);
    IO.Put_Line ("  bytes parsed        " & Bytes_Parsed'Image);
    IO.Put_Line ("  skipped, evaluation " & Skipped_Evaluation'Image);
+   IO.Put_Line ("  skipped, update     " & Skipped_Update'Image);
    IO.Put_Line ("  skipped, missing    " & Skipped_Missing'Image);
    IO.Put_Line ("  rejected, valid     " & Unexpected_Reject'Image);
    IO.Put_Line ("  accepted, invalid   " & Unexpected_Accept'Image);

@@ -1,4 +1,5 @@
 with Ada.Characters.Handling;
+with Ada.Containers.Indefinite_Ordered_Sets;
 with Ada.Containers.Indefinite_Vectors;
 
 with Flyology_RDF.Lexers;
@@ -11,6 +12,11 @@ package body Flyology_SPARQL.Parsers is
 
    use type Lexers.Scan_Status;
    use type Lexers.Token_Kind;
+   use type Syntax.Node_Kind;
+   use type Syntax.Node_Reference;
+
+   package String_Sets is new Ada.Containers.Indefinite_Ordered_Sets
+     (Element_Type => String);
 
    package Token_Vectors is new Ada.Containers.Indefinite_Vectors
      (Index_Type   => Positive,
@@ -1292,6 +1298,170 @@ package body Flyology_SPARQL.Parsers is
          Parse_Modifiers;
       end Parse_Select;
 
+      --  Some of what SPARQL calls a syntax error is not expressible in
+      --  its grammar: a projection that repeats a name, a BIND onto a
+      --  variable already in scope, a blank node label shared between two
+      --  pattern groups. A parser that only implements the grammar accepts
+      --  all of them, so these are checked over the finished tree.
+      procedure Validate is
+         Query_Value : constant Syntax.Query := Syntax.To_Query (Tree);
+         Bound       : String_Sets.Set;
+         Group_Depth : Natural := 0;
+         Labels      : String_Sets.Set;
+
+         procedure Complain (Message : String) is
+         begin
+            raise Parse_Error with Message;
+         end Complain;
+
+         procedure Walk (Node : Syntax.Node_Reference);
+
+         --  Every variable a pattern makes available to what follows it.
+         procedure Collect_Variables (Node : Syntax.Node_Reference) is
+         begin
+            if Node = Syntax.No_Node then
+               return;
+            end if;
+            if Syntax.Kind (Query_Value, Node) = Syntax.Variable_Node then
+               Bound.Include (Syntax.Text (Query_Value, Node));
+            end if;
+            for Index in 1 .. Syntax.Child_Count (Query_Value, Node) loop
+               Collect_Variables (Syntax.Child (Query_Value, Node, Index));
+            end loop;
+         end Collect_Variables;
+
+         procedure Walk (Node : Syntax.Node_Reference) is
+         begin
+            if Node = Syntax.No_Node then
+               return;
+            end if;
+
+            case Syntax.Kind (Query_Value, Node) is
+               when Syntax.Triple_Node =>
+                  --  A blank node label may not be shared between two
+                  --  groups; within one it is an ordinary node.
+                  for Index in 1 .. Syntax.Child_Count (Query_Value, Node)
+                  loop
+                     declare
+                        Part : constant Syntax.Node_Reference :=
+                          Syntax.Child (Query_Value, Node, Index);
+                     begin
+                        if Syntax.Kind (Query_Value, Part)
+                           = Syntax.Blank_Node
+                          and then Syntax.Text (Query_Value, Part)'Length > 0
+                          and then Syntax.Text (Query_Value, Part) (1) /= 'g'
+                        then
+                           declare
+                              Tag : constant String :=
+                                Group_Depth'Image & ":"
+                                & Syntax.Text (Query_Value, Part);
+                              Bare : constant String :=
+                                Syntax.Text (Query_Value, Part);
+                           begin
+                              if Labels.Contains (Bare)
+                                and then not Labels.Contains (Tag)
+                              then
+                                 Complain
+                                   ("blank node label """ & Bare
+                                    & """ is used in more than one group");
+                              end if;
+                              Labels.Include (Bare);
+                              Labels.Include (Tag);
+                           end;
+                        end if;
+                     end;
+                  end loop;
+                  Collect_Variables (Node);
+
+               when Syntax.Bind_Node =>
+                  declare
+                     Target : constant Syntax.Node_Reference :=
+                       Syntax.Child (Query_Value, Node, 2);
+                  begin
+                     if Syntax.Kind (Query_Value, Target)
+                        = Syntax.Variable_Node
+                       and then Bound.Contains
+                                  (Syntax.Text (Query_Value, Target))
+                     then
+                        Complain
+                          ("BIND assigns to ?"
+                           & Syntax.Text (Query_Value, Target)
+                           & ", which is already in scope");
+                     end if;
+                     Collect_Variables (Target);
+                  end;
+
+               when Syntax.Group_Node | Syntax.Optional_Node
+                  | Syntax.Union_Node | Syntax.Minus_Node
+                  | Syntax.Graph_Node | Syntax.Service_Node =>
+                  Group_Depth := Group_Depth + 1;
+                  for Index in 1 .. Syntax.Child_Count (Query_Value, Node)
+                  loop
+                     Walk (Syntax.Child (Query_Value, Node, Index));
+                  end loop;
+                  Group_Depth := Group_Depth - 1;
+
+               when Syntax.Subquery_Node =>
+                  --  A subquery has its own scope; nothing inside it
+                  --  constrains the query around it.
+                  null;
+
+               when others =>
+                  for Index in 1 .. Syntax.Child_Count (Query_Value, Node)
+                  loop
+                     Walk (Syntax.Child (Query_Value, Node, Index));
+                  end loop;
+            end case;
+         end Walk;
+
+      begin
+         Walk (Syntax.Where_Clause (Query_Value));
+
+         --  A projection may not name the same variable twice, however it
+         --  arrives there.
+         if Syntax.Projection (Query_Value) /= Syntax.No_Node then
+            declare
+               Seen : String_Sets.Set;
+               List : constant Syntax.Node_Reference :=
+                 Syntax.Projection (Query_Value);
+            begin
+               for Index in 1 .. Syntax.Child_Count (Query_Value, List) loop
+                  declare
+                     Item : constant Syntax.Node_Reference :=
+                       Syntax.Child (Query_Value, List, Index);
+                     Name : constant String :=
+                       (if Syntax.Kind (Query_Value, Item)
+                           = Syntax.Variable_Node
+                        then Syntax.Text (Query_Value, Item)
+                        elsif Syntax.Kind (Query_Value, Item)
+                              = Syntax.Projection_Node
+                          and then Syntax.Child_Count (Query_Value, Item) > 1
+                        then Syntax.Text
+                               (Query_Value,
+                                Syntax.Child (Query_Value, Item, 2))
+                        else "");
+                  begin
+                     if Name /= "" then
+                        if Seen.Contains (Name) then
+                           Complain
+                             ("?" & Name & " is projected more than once");
+                        end if;
+                        Seen.Include (Name);
+                     end if;
+                  end;
+               end loop;
+            end;
+         end if;
+
+         --  GROUP BY replaces the solution's variables, so "*" has nothing
+         --  left to mean.
+         if Syntax.Group_By (Query_Value) /= Syntax.No_Node
+           and then Syntax.Selects_All (Query_Value)
+         then
+            Complain ("SELECT * cannot be combined with GROUP BY");
+         end if;
+      end Validate;
+
    begin
       Tokenize;
       if Tokens.Is_Empty then
@@ -1314,6 +1484,37 @@ package body Flyology_SPARQL.Parsers is
 
       elsif Take_Keyword ("CONSTRUCT") then
          Syntax.Start (Tree, Syntax.Construct_Query);
+         Parse_Dataset;
+
+         if At_Keyword ("WHERE") then
+            --  The short form: no template, the pattern serving as both.
+            Advance;
+            declare
+               Where : constant Syntax.Node_Reference := Parse_Group;
+               Built : constant Syntax.Query := Syntax.To_Query (Tree);
+            begin
+               --  The short form serves as its own template, so its
+               --  pattern has to be something a template could contain:
+               --  triples and nothing else.
+               for Index in 1 .. Syntax.Child_Count (Built, Where) loop
+                  if Syntax.Kind (Built, Syntax.Child (Built, Where, Index))
+                     not in Syntax.Triple_Node | Syntax.Reified_Node
+                          | Syntax.Triple_Term_Node
+                  then
+                     Fail ("CONSTRUCT WHERE admits only a triples block");
+                  end if;
+               end loop;
+               Syntax.Set_Template (Tree, Where);
+               Syntax.Set_Where (Tree, Where);
+            end;
+            Parse_Modifiers;
+            if not At_End then
+               Fail ("unexpected input after the query");
+            end if;
+            Validate;
+            return Syntax.To_Query (Tree);
+         end if;
+
          declare
             Items : constant Syntax.Node_Reference :=
               Node (Syntax.Group_Node);
@@ -1325,6 +1526,7 @@ package body Flyology_SPARQL.Parsers is
             Expect (Lexers.Close_Brace_Token, "a closing brace");
             Syntax.Set_Template (Tree, Items);
          end;
+         Parse_Dataset;
          if Take_Keyword ("WHERE") then
             null;
          end if;
@@ -1365,6 +1567,7 @@ package body Flyology_SPARQL.Parsers is
          Fail ("unexpected input after the query");
       end if;
 
+      Validate;
       return Syntax.To_Query (Tree);
    end Parse;
 
