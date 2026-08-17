@@ -10,6 +10,7 @@ executables = [
   "terms_tests",
   "statement_tests",
   "cursor_tests",
+  "lexer_tests",
 ]
 
 [[depends-on]]

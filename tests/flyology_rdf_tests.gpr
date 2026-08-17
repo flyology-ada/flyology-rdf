@@ -7,7 +7,7 @@ project Flyology_RDF_Tests is
    for Exec_Dir use "bin";
    for Main use
      ("iri_strictness_gate.adb", "terms_tests.adb", "statement_tests.adb",
-      "cursor_tests.adb");
+      "cursor_tests.adb", "lexer_tests.adb");
    for Create_Missing_Dirs use "True";
 
    package Compiler is
