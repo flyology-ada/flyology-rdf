@@ -1,0 +1,40 @@
+with "flyology_iri.gpr";
+
+project Flyology_RDF is
+
+   type Build_Mode_Kind is ("checked", "release");
+   Build_Mode : Build_Mode_Kind :=
+     external ("FLYOLOGY_RDF_BUILD_MODE", "checked");
+
+   for Languages use ("Ada");
+   for Source_Dirs use ("src");
+   for Object_Dir use "obj";
+   for Library_Name use "flyology_rdf";
+   for Library_Dir use "lib";
+   for Library_Kind use "static";
+   for Create_Missing_Dirs use "True";
+
+   package Compiler is
+      Common :=
+        ("-gnat2022", "-gnatwa", "-gnatwJ", "-fstack-check",
+         "-fno-strict-aliasing", "-gnatn2");
+
+      case Build_Mode is
+         when "checked" =>
+            --  Assertions carry the constructor-enforced term invariants, so
+            --  the checked mode is the one the test and fuzz builds use.
+            for Default_Switches ("Ada") use Common & ("-O1", "-gnata");
+         when "release" =>
+            --  Assertions are deliberately absent here: the published
+            --  benchmark medians measure the library as a consumer builds
+            --  it, and leaving -gnata on would measure the checks instead.
+            for Default_Switches ("Ada") use Common & ("-O2");
+      end case;
+   end Compiler;
+
+   package Documentation is
+      for Output_Dir ("html") use "docs/api";
+      for Resources_Dir ("html") use "docs/gnatdoc/html";
+   end Documentation;
+
+end Flyology_RDF;

@@ -1,0 +1,14 @@
+name = "flyology_rdf_tests"
+description = "Test programs for flyology_rdf"
+version = "0.1.0-dev"
+licenses = "MIT OR Apache-2.0"
+authors = ["Yurii Rashkovskii"]
+maintainers = ["Yurii Rashkovskii <yrashk@gmail.com>"]
+maintainers-logins = ["yrashk"]
+executables = ["iri_strictness_gate"]
+
+[[depends-on]]
+flyology_rdf = "*"
+
+[[pins]]
+flyology_rdf = { path = ".." }
