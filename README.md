@@ -81,7 +81,7 @@ not a verdict:
 | --- | --- | --- | --- | --- |
 | RDF 1.1 and 1.2 | 1050 | **0** | **0** | **0** |
 | Notation3 syntax | 1193 | 15 | 2 | — |
-| SPARQL 1.1 syntax | 488 | 6 | 8 | — |
+| SPARQL 1.1 syntax | 488 | **0** | **0** | — |
 
 Corpora are pinned in `scripts/provision-oracles.sh`; the runs above are
 against those pins.
@@ -94,11 +94,11 @@ node label.
 
 SPARQL reads what it claims to: the four query forms, the pattern and
 expression grammars, property paths, subqueries, VALUES, EXISTS, dataset
-clauses, aggregates, and the RDF 1.2 term syntax. Its weak column is the
-other one — 81 malformed queries still get through. Most are RDF 1.2
-restrictions on where a reifier or a list may appear, and well-formedness
-rules that sit outside the grammar; some of the latter are checked already,
-and the rest are the harder half of the work.
+clauses, aggregates, and the RDF 1.2 term syntax. It also rejects what the
+grammar alone admits — a projection that repeats a name, an AS that takes a
+name already in scope, a variable projected past a GROUP BY that dropped
+it, a blank node label spanning two basic graph patterns, a reifier or a
+list where RDF 1.2 does not allow one.
 
 ## Licence
 

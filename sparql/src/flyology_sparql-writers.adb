@@ -184,6 +184,21 @@ package body Flyology_SPARQL.Writers is
          Put (Indent (Depth) & "}");
       end Write_Group;
 
+      --  An operand of UNION is a group or a subquery, and a subquery
+      --  brings its own braces, so it is written as the pattern it is
+      --  rather than opened a second time.
+      procedure Write_Operand (Node : Syntax.Node_Reference; Depth : Natural)
+      is
+      begin
+         if Syntax.Kind (Value, Node) = Syntax.Subquery_Node then
+            Put ((1 => ASCII.LF));
+            Write_Pattern (Node, Depth + 1);
+            Put (Indent (Depth));
+         else
+            Write_Group (Node, Depth);
+         end if;
+      end Write_Operand;
+
       procedure Write_Pattern
         (Node : Syntax.Node_Reference; Depth : Natural) is
       begin
@@ -214,15 +229,17 @@ package body Flyology_SPARQL.Writers is
                Put (Indent (Depth)
                     & (if Syntax.Kind (Value, Node) = Syntax.Graph_Node
                        then "GRAPH " else "SERVICE ")
+                    & (if Syntax.Detail (Value, Node) = "SILENT"
+                       then "SILENT " else "")
                     & Render (Syntax.Child (Value, Node, 1)) & " ");
                Write_Group (Syntax.Child (Value, Node, 2), Depth);
                Put ((1 => ASCII.LF));
 
             when Syntax.Union_Node =>
                Put (Indent (Depth));
-               Write_Group (Syntax.Child (Value, Node, 1), Depth);
+               Write_Operand (Syntax.Child (Value, Node, 1), Depth);
                Put (" UNION ");
-               Write_Group (Syntax.Child (Value, Node, 2), Depth);
+               Write_Operand (Syntax.Child (Value, Node, 2), Depth);
                Put ((1 => ASCII.LF));
 
             when Syntax.Filter_Node =>

@@ -108,6 +108,16 @@ package body Flyology_SPARQL.Parsers is
          return False;
       end Take_Keyword;
 
+      --  The words that begin a pattern item rather than continue the
+      --  triples before it. Asked in exactly one place, because a test
+      --  written out longhand compares token kinds and so cannot see the
+      --  keywords that arrive under a token of their own.
+      function At_Pattern_Keyword return Boolean
+      is (At_Keyword ("OPTIONAL") or else At_Keyword ("FILTER")
+          or else At_Keyword ("GRAPH") or else At_Keyword ("MINUS")
+          or else At_Keyword ("BIND") or else At_Keyword ("SERVICE")
+          or else At_Keyword ("VALUES") or else At_Keyword ("UNION"));
+
       procedure Expect (Which : Lexers.Token_Kind; What : String) is
       begin
          if At_End or else Peek /= Which then
@@ -226,6 +236,41 @@ package body Flyology_SPARQL.Parsers is
                   return Node (Syntax.Literal_Node, Lexical);
                end;
 
+            when Lexers.Open_Triple_Term_Token =>
+               --  A triple term names a triple without asserting it, so
+               --  unlike a collection or a property list it states
+               --  nothing and needs no group to state it into. That is
+               --  what lets it be an ordinary term.
+               Advance;
+               declare
+                  Result : constant Syntax.Node_Reference :=
+                    Node (Syntax.Triple_Term_Node);
+               begin
+                  for Position in 1 .. 3 loop
+                     declare
+                        Part : constant Syntax.Node_Reference := Parse_Term;
+                     begin
+                        --  Only the object of a triple term is a term in
+                        --  the full sense. Its subject names something,
+                        --  so it is not a literal and not another triple
+                        --  term, and its predicate is an IRI.
+                        if Position < 3
+                          and then Syntax.Kind (Syntax.To_Query (Tree), Part)
+                                   in Syntax.Literal_Node
+                                    | Syntax.Triple_Term_Node
+                        then
+                           Fail ("a triple term names its subject and"
+                                 & " predicate, so neither is a literal"
+                                 & " or a triple term");
+                        end if;
+                        Syntax.Add_Child (Tree, Result, Part);
+                     end;
+                  end loop;
+                  Expect (Lexers.Close_Triple_Term_Token,
+                          "a triple term terminator");
+                  return Result;
+               end;
+
             when others =>
                Fail ("expected a term");
          end case;
@@ -245,35 +290,6 @@ package body Flyology_SPARQL.Parsers is
             begin
                Expect (Lexers.Close_Paren_Token, "a closing parenthesis");
                return Inner;
-            end;
-         end if;
-
-         --  A triple term is a term, so it belongs in an expression as
-         --  much as in a pattern.
-         if Peek = Lexers.Open_Triple_Term_Token then
-            Advance;
-            declare
-               Result : constant Syntax.Node_Reference :=
-                 Node (Syntax.Triple_Term_Node);
-            begin
-               --  Its components are terms, not expressions: a triple
-               --  term quotes a statement, and a statement is made of
-               --  terms. The subject of a statement is never a literal.
-               declare
-                  Subject : constant Syntax.Node_Reference := Parse_Term;
-               begin
-                  if Syntax.Kind (Syntax.To_Query (Tree), Subject)
-                     = Syntax.Literal_Node
-                  then
-                     Fail ("a literal cannot be a subject");
-                  end if;
-                  Syntax.Add_Child (Tree, Result, Subject);
-               end;
-               Syntax.Add_Child (Tree, Result, Parse_Term);
-               Syntax.Add_Child (Tree, Result, Parse_Term);
-               Expect (Lexers.Close_Triple_Term_Token,
-                       "a triple term terminator");
-               return Result;
             end;
          end if;
 
@@ -311,17 +327,16 @@ package body Flyology_SPARQL.Parsers is
                Result := Node (Syntax.Call_Node, Name);
                if Peek = Lexers.Open_Paren_Token then
                   Advance;
+                  if Take_Keyword ("DISTINCT") then
+                     Syntax.Add_Child
+                       (Tree, Result, Node (Syntax.Call_Node, "DISTINCT"));
+                  end if;
                   if Peek = Lexers.Star_Token then
-                     --  COUNT(*)
+                     --  COUNT(*), with or without the DISTINCT above it.
                      Advance;
                      Syntax.Add_Child
                        (Tree, Result, Node (Syntax.Variable_Node, "*"));
                   elsif Peek /= Lexers.Close_Paren_Token then
-                     if Take_Keyword ("DISTINCT") then
-                        Syntax.Add_Child
-                          (Tree, Result,
-                           Node (Syntax.Call_Node, "DISTINCT"));
-                     end if;
                      loop
                         Syntax.Add_Child (Tree, Result, Parse_Expression);
                         exit when Peek /= Lexers.Comma_Token;
@@ -924,10 +939,7 @@ package body Flyology_SPARQL.Parsers is
                             | Lexers.Close_Annotation_Token;
             --  A trailing semicolon may be followed by the next pattern
             --  rather than by another predicate.
-            exit when Peek = Lexers.Keyword_Token
-              and then Upper (Lexers.Text (Current)) in
-                "OPTIONAL" | "FILTER" | "GRAPH" | "MINUS" | "BIND"
-                | "SERVICE" | "VALUES" | "UNION";
+            exit when At_Pattern_Keyword;
          end loop;
       end Parse_Predicate_Objects;
 
@@ -974,10 +986,7 @@ package body Flyology_SPARQL.Parsers is
             end if;
             Advance;
             exit when At_End or else Peek = Lexers.Close_Brace_Token;
-            exit when Peek = Lexers.Keyword_Token
-              and then Upper (Lexers.Text (Current)) in
-                "OPTIONAL" | "FILTER" | "GRAPH" | "MINUS" | "BIND"
-                | "SERVICE" | "VALUES" | "UNION";
+            exit when At_Pattern_Keyword;
             exit when Peek = Lexers.Open_Brace_Token;
          end loop;
       end Parse_Triples;
@@ -1087,6 +1096,30 @@ package body Flyology_SPARQL.Parsers is
          return Item;
       end Parse_Values;
 
+      --  A brace-delimited item: a subquery or an ordinary group. Both
+      --  are operands of UNION, so recognising them in one place is what
+      --  keeps "{SELECT ...} UNION {SELECT ...}" from needing a rule of
+      --  its own.
+      function Parse_Brace_Item return Syntax.Node_Reference is
+      begin
+         if Next + 1 <= Tokens.Last_Index
+           and then Lexers.Kind (Tokens (Next + 1)) = Lexers.Keyword_Token
+           and then Upper (Lexers.Text (Tokens (Next + 1))) = "SELECT"
+         then
+            Advance;   --  the brace
+            Advance;   --  SELECT
+            declare
+               Item : constant Syntax.Node_Reference :=
+                 Node (Syntax.Subquery_Node);
+            begin
+               Parse_Subselect (Item);
+               Expect (Lexers.Close_Brace_Token, "a closing brace");
+               return Item;
+            end;
+         end if;
+         return Parse_Group;
+      end Parse_Brace_Item;
+
       function Parse_Group return Syntax.Node_Reference is
          Result : constant Syntax.Node_Reference := Node (Syntax.Group_Node);
       begin
@@ -1132,8 +1165,18 @@ package body Flyology_SPARQL.Parsers is
                   Item     : Syntax.Node_Reference;
                begin
                   Advance;
-                  Item := Node (if Is_Graph then Syntax.Graph_Node
-                                else Syntax.Service_Node);
+                  declare
+                     --  SILENT turns a remote failure into an empty
+                     --  result. It is a modifier of SERVICE, not the
+                     --  name of the service.
+                     Silent : constant Boolean :=
+                       not Is_Graph and then Take_Keyword ("SILENT");
+                  begin
+                     Item :=
+                       Node (Variant => (if Is_Graph then Syntax.Graph_Node
+                                         else Syntax.Service_Node),
+                             Detail  => (if Silent then "SILENT" else ""));
+                  end;
                   Syntax.Add_Child (Tree, Item, Parse_Term);
                   Syntax.Add_Child (Tree, Item, Parse_Group);
                   Syntax.Add_Child (Tree, Result, Item);
@@ -1177,26 +1220,9 @@ package body Flyology_SPARQL.Parsers is
                Advance;
                Syntax.Add_Child (Tree, Result, Parse_Values);
 
-            elsif Peek = Lexers.Open_Brace_Token
-              and then Next + 1 <= Tokens.Last_Index
-              and then Lexers.Kind (Tokens (Next + 1)) = Lexers.Keyword_Token
-              and then Upper (Lexers.Text (Tokens (Next + 1))) = "SELECT"
-            then
-               --  A subquery written as one item of a group.
-               Advance;
-               declare
-                  Item : constant Syntax.Node_Reference :=
-                    Node (Syntax.Subquery_Node);
-               begin
-                  Advance;
-                  Parse_Subselect (Item);
-                  Expect (Lexers.Close_Brace_Token, "a closing brace");
-                  Syntax.Add_Child (Tree, Result, Item);
-               end;
-
             elsif Peek = Lexers.Open_Brace_Token then
                declare
-                  Left : Syntax.Node_Reference := Parse_Group;
+                  Left : Syntax.Node_Reference := Parse_Brace_Item;
                begin
                   while At_Keyword ("UNION") loop
                      Advance;
@@ -1205,7 +1231,7 @@ package body Flyology_SPARQL.Parsers is
                           Node (Syntax.Union_Node);
                      begin
                         Syntax.Add_Child (Tree, Item, Left);
-                        Syntax.Add_Child (Tree, Item, Parse_Group);
+                        Syntax.Add_Child (Tree, Item, Parse_Brace_Item);
                         Left := Item;
                      end;
                   end loop;
@@ -1403,7 +1429,32 @@ package body Flyology_SPARQL.Parsers is
                  Node (Syntax.Projection_Node);
             begin
                loop
-                  Syntax.Add_Child (Tree, Items, Parse_Expression);
+                  if Peek = Lexers.Open_Paren_Token then
+                     --  "( expression )" and "( expression AS ?name )"
+                     --  start alike and are told apart only at the AS.
+                     Advance;
+                     declare
+                        Value : constant Syntax.Node_Reference :=
+                          Parse_Expression;
+                     begin
+                        if Take_Keyword ("AS") then
+                           declare
+                              Item : constant Syntax.Node_Reference :=
+                                Node (Syntax.Projection_Node, "AS");
+                           begin
+                              Syntax.Add_Child (Tree, Item, Value);
+                              Syntax.Add_Child (Tree, Item, Parse_Term);
+                              Syntax.Add_Child (Tree, Items, Item);
+                           end;
+                        else
+                           Syntax.Add_Child (Tree, Items, Value);
+                        end if;
+                        Expect (Lexers.Close_Paren_Token,
+                                "a closing parenthesis");
+                     end;
+                  else
+                     Syntax.Add_Child (Tree, Items, Parse_Expression);
+                  end if;
                   exit when At_End
                     or else Peek not in Lexers.Variable_Token
                                       | Lexers.Open_Paren_Token
@@ -1452,12 +1503,17 @@ package body Flyology_SPARQL.Parsers is
                         Syntax.Add_Child (Tree, Items, Key);
                      end;
                   end;
+                  --  An order key may be a bracketed expression, a
+                  --  variable, or a call -- and a call is named by an IRI
+                  --  as often as by a keyword.
                   exit when At_End
                     or else At_Keyword ("LIMIT")
                     or else At_Keyword ("OFFSET")
                     or else Peek not in Lexers.Variable_Token
                                       | Lexers.Open_Paren_Token
-                                      | Lexers.Keyword_Token;
+                                      | Lexers.Keyword_Token
+                                      | Lexers.IRI_Reference_Token
+                                      | Lexers.Prefixed_Name_Token;
                end loop;
                Syntax.Set_Order_By (Tree, Items);
             end;
@@ -1544,14 +1600,53 @@ package body Flyology_SPARQL.Parsers is
       procedure Validate is
          Query_Value : constant Syntax.Query := Syntax.To_Query (Tree);
          Bound       : String_Sets.Set;
-         Group_Depth : Natural := 0;
-         Group_Serial : Natural := 0;
          Labels      : String_Sets.Set;
+
+         --  Each group gets a serial of its own, and gets it back when a
+         --  nested group closes: a counter that only ever climbs would
+         --  hand the enclosing group the nested one's number and so let
+         --  a blank node label cross between them unnoticed.
+         Group_Serial : Natural := 0;
+         Next_Serial  : Natural := 0;
 
          procedure Complain (Message : String) is
          begin
             raise Parse_Error with Message;
          end Complain;
+
+         function Is_Aggregate (Name : String) return Boolean
+         is (Upper (Name) in "COUNT" | "SUM" | "MIN" | "MAX" | "AVG"
+                           | "SAMPLE" | "GROUP_CONCAT");
+
+         function Aggregates (Node : Syntax.Node_Reference) return Boolean is
+         begin
+            if Node = Syntax.No_Node then
+               return False;
+            end if;
+            if Syntax.Kind (Query_Value, Node) = Syntax.Call_Node
+              and then Is_Aggregate (Syntax.Text (Query_Value, Node))
+            then
+               return True;
+            end if;
+            for Index in 1 .. Syntax.Child_Count (Query_Value, Node) loop
+               if Aggregates (Syntax.Child (Query_Value, Node, Index)) then
+                  return True;
+               end if;
+            end loop;
+            return False;
+         end Aggregates;
+
+         --  The name an item of a projection list makes available, which
+         --  is the variable itself or the one its AS binds.
+         function Projected_Name
+           (Item : Syntax.Node_Reference) return String
+         is (if Syntax.Kind (Query_Value, Item) = Syntax.Variable_Node
+             then Syntax.Text (Query_Value, Item)
+             elsif Syntax.Kind (Query_Value, Item) = Syntax.Projection_Node
+               and then Syntax.Child_Count (Query_Value, Item) > 1
+             then Syntax.Text
+                    (Query_Value, Syntax.Child (Query_Value, Item, 2))
+             else "");
 
          procedure Walk (Node : Syntax.Node_Reference);
 
@@ -1642,22 +1737,65 @@ package body Flyology_SPARQL.Parsers is
                   --  may not reuse those names.
                   declare
                      Enclosing : constant String_Sets.Set := Bound;
+                     Outer     : constant Natural := Group_Serial;
                   begin
                      Bound.Clear;
-                     Group_Depth := Group_Depth + 1;
-                     Group_Serial := Group_Serial + 1;
+                     Next_Serial := Next_Serial + 1;
+                     Group_Serial := Next_Serial;
                      for Index in 1 .. Syntax.Child_Count (Query_Value, Node)
                      loop
-                        Walk (Syntax.Child (Query_Value, Node, Index));
+                        declare
+                           Item : constant Syntax.Node_Reference :=
+                             Syntax.Child (Query_Value, Node, Index);
+                        begin
+                           Walk (Item);
+                           --  A basic graph pattern is a run of adjacent
+                           --  triples. A FILTER applies to the whole
+                           --  group and so does not interrupt one;
+                           --  anything else does, and the labels on
+                           --  either side belong to different patterns.
+                           if Syntax.Kind (Query_Value, Item)
+                              not in Syntax.Triple_Node | Syntax.Filter_Node
+                           then
+                              Next_Serial := Next_Serial + 1;
+                              Group_Serial := Next_Serial;
+                           end if;
+                        end;
                      end loop;
-                     Group_Depth := Group_Depth - 1;
+                     Group_Serial := Outer;
                      Bound.Union (Enclosing);
                   end;
 
                when Syntax.Subquery_Node =>
-                  --  A subquery has its own scope; nothing inside it
-                  --  constrains the query around it.
-                  null;
+                  --  A subquery has its own scope, so nothing inside it
+                  --  constrains the query around it -- except that what
+                  --  it projects is in scope where it sits.
+                  for Index in 1 .. Syntax.Child_Count (Query_Value, Node)
+                  loop
+                     declare
+                        Items : constant Syntax.Node_Reference :=
+                          Syntax.Child (Query_Value, Node, Index);
+                     begin
+                        if Syntax.Kind (Query_Value, Items)
+                           = Syntax.Projection_Node
+                        then
+                           for Slot in
+                             1 .. Syntax.Child_Count (Query_Value, Items)
+                           loop
+                              declare
+                                 Name : constant String :=
+                                   Projected_Name
+                                     (Syntax.Child (Query_Value, Items, Slot));
+                              begin
+                                 if Name /= "" then
+                                    Bound.Include (Name);
+                                 end if;
+                              end;
+                           end loop;
+                           exit;
+                        end if;
+                     end;
+                  end loop;
 
                when others =>
                   for Index in 1 .. Syntax.Child_Count (Query_Value, Node)
@@ -1682,17 +1820,7 @@ package body Flyology_SPARQL.Parsers is
                   declare
                      Item : constant Syntax.Node_Reference :=
                        Syntax.Child (Query_Value, List, Index);
-                     Name : constant String :=
-                       (if Syntax.Kind (Query_Value, Item)
-                           = Syntax.Variable_Node
-                        then Syntax.Text (Query_Value, Item)
-                        elsif Syntax.Kind (Query_Value, Item)
-                              = Syntax.Projection_Node
-                          and then Syntax.Child_Count (Query_Value, Item) > 1
-                        then Syntax.Text
-                               (Query_Value,
-                                Syntax.Child (Query_Value, Item, 2))
-                        else "");
+                     Name : constant String := Projected_Name (Item);
                   begin
                      if Name /= "" then
                         if Seen.Contains (Name) then
@@ -1708,10 +1836,6 @@ package body Flyology_SPARQL.Parsers is
 
          --  Aggregates: fixed arity, and never one inside another.
          declare
-            function Is_Aggregate (Name : String) return Boolean
-            is (Upper (Name) in "COUNT" | "SUM" | "MIN" | "MAX" | "AVG"
-                              | "SAMPLE" | "GROUP_CONCAT");
-
             --  DISTINCT and SEPARATOR ride along as marker children and
             --  are not arguments.
             function Argument_Count
@@ -1781,44 +1905,101 @@ package body Flyology_SPARQL.Parsers is
             Check_Aggregates (Syntax.Order_By (Query_Value), False);
          end;
 
-         --  With GROUP BY, a bare projected variable has to be one of the
-         --  grouping keys: nothing else survives the grouping.
-         if Syntax.Group_By (Query_Value) /= Syntax.No_Node
-           and then Syntax.Projection (Query_Value) /= Syntax.No_Node
-         then
+         --  Grouping replaces the solution's variables with the grouping
+         --  keys, so what a projection may name is settled there rather
+         --  than by the WHERE clause. An aggregate with no GROUP BY puts
+         --  every solution in one group, which leaves no keys at all --
+         --  which is why SELECT ?p (COUNT(?o) AS ?c) is an error and
+         --  SELECT (COUNT(?o) AS ?c) is not.
+         if Syntax.Projection (Query_Value) /= Syntax.No_Node then
             declare
-               Keys : String_Sets.Set;
-               List : constant Syntax.Node_Reference :=
+               Grouping : constant Syntax.Node_Reference :=
                  Syntax.Group_By (Query_Value);
-               Items : constant Syntax.Node_Reference :=
+               Items    : constant Syntax.Node_Reference :=
                  Syntax.Projection (Query_Value);
+               Keys     : String_Sets.Set;
+               Grouped  : Boolean := Grouping /= Syntax.No_Node;
+
+               --  Every variable an expression names outside an
+               --  aggregate. Inside one the whole group is in reach, so
+               --  the walk stops there.
+               procedure Check_Free (Node : Syntax.Node_Reference) is
+               begin
+                  if Node = Syntax.No_Node then
+                     return;
+                  end if;
+                  if Syntax.Kind (Query_Value, Node) = Syntax.Call_Node
+                    and then Is_Aggregate (Syntax.Text (Query_Value, Node))
+                  then
+                     return;
+                  end if;
+                  if Syntax.Kind (Query_Value, Node) = Syntax.Variable_Node
+                    and then not Keys.Contains
+                                   (Syntax.Text (Query_Value, Node))
+                  then
+                     Complain
+                       ("?" & Syntax.Text (Query_Value, Node)
+                        & " is projected but is not a grouping key");
+                  end if;
+                  for Index in 1 .. Syntax.Child_Count (Query_Value, Node)
+                  loop
+                     Check_Free (Syntax.Child (Query_Value, Node, Index));
+                  end loop;
+               end Check_Free;
             begin
-               for Index in 1 .. Syntax.Child_Count (Query_Value, List) loop
-                  declare
-                     Key : constant Syntax.Node_Reference :=
-                       Syntax.Child (Query_Value, List, Index);
-                  begin
-                     if Syntax.Kind (Query_Value, Key)
-                        = Syntax.Variable_Node
-                     then
-                        Keys.Include (Syntax.Text (Query_Value, Key));
-                     end if;
-                  end;
+               if Grouping /= Syntax.No_Node then
+                  for Index in 1 .. Syntax.Child_Count (Query_Value, Grouping)
+                  loop
+                     declare
+                        Name : constant String :=
+                          Projected_Name
+                            (Syntax.Child (Query_Value, Grouping, Index));
+                     begin
+                        if Name /= "" then
+                           Keys.Include (Name);
+                        end if;
+                     end;
+                  end loop;
+               end if;
+
+               for Index in 1 .. Syntax.Child_Count (Query_Value, Items) loop
+                  Grouped := Grouped
+                    or else Aggregates (Syntax.Child (Query_Value, Items,
+                                                      Index));
                end loop;
 
                for Index in 1 .. Syntax.Child_Count (Query_Value, Items) loop
                   declare
                      Item : constant Syntax.Node_Reference :=
                        Syntax.Child (Query_Value, Items, Index);
+                     Name : constant String := Projected_Name (Item);
                   begin
+                     if Grouped then
+                        Check_Free
+                          (if Syntax.Kind (Query_Value, Item)
+                              = Syntax.Projection_Node
+                           then Syntax.Child (Query_Value, Item, 1)
+                           else Item);
+                     end if;
+
+                     --  AS introduces a name, so it may not take one that
+                     --  is already available here. After a GROUP BY the
+                     --  only names available are the keys, which is why
+                     --  a variable the WHERE clause bound but the
+                     --  grouping dropped is free again.
                      if Syntax.Kind (Query_Value, Item)
-                        = Syntax.Variable_Node
-                       and then not Keys.Contains
-                                      (Syntax.Text (Query_Value, Item))
+                        = Syntax.Projection_Node
+                       and then Name /= ""
                      then
-                        Complain
-                          ("?" & Syntax.Text (Query_Value, Item)
-                           & " is projected but is not a grouping key");
+                        if (if Grouping /= Syntax.No_Node
+                            then Keys.Contains (Name)
+                            else Bound.Contains (Name))
+                        then
+                           Complain
+                             ("?" & Name & " is already in scope and so"
+                              & " cannot be bound by AS");
+                        end if;
+                        Keys.Include (Name);
                      end if;
                   end;
                end loop;
