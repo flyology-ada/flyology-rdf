@@ -883,7 +883,19 @@ package body Flyology_SPARQL.Parsers is
                end if;
             end;
 
-            exit when Peek /= Lexers.Dot_Token;
+            if Peek /= Lexers.Dot_Token then
+               if Peek in Lexers.IRI_Reference_Token
+                        | Lexers.Prefixed_Name_Token
+                        | Lexers.Blank_Label_Token | Lexers.Variable_Token
+                        | Lexers.String_Token | Lexers.Integer_Token
+                        | Lexers.Decimal_Token | Lexers.Double_Token
+                        | Lexers.Boolean_Token | Lexers.Open_Quoted_Token
+                        | Lexers.Open_Triple_Term_Token
+               then
+                  Fail ("a triple is missing its terminator");
+               end if;
+               exit;
+            end if;
             Advance;
             exit when At_End or else Peek = Lexers.Close_Brace_Token;
             exit when Peek = Lexers.Keyword_Token
@@ -1134,6 +1146,10 @@ package body Flyology_SPARQL.Parsers is
                end;
 
             elsif Peek = Lexers.Dot_Token then
+               if Syntax.Child_Count (Syntax.To_Query (Tree), Result) = 0
+               then
+                  Fail ("a terminator with nothing before it");
+               end if;
                Advance;
 
             else
