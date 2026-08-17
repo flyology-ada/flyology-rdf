@@ -802,11 +802,23 @@ package body Flyology_RDF.Turtle_Parsers is
                end;
 
             when Lexers.Version_Directive_Token =>
-               Advance;
-               if Peek_Kind /= Lexers.String_Token then
-                  Reject (Malformed_Syntax, Directive_Production);
-               end if;
-               Advance;
+               declare
+                  Terminated : constant Boolean :=
+                    Lexers.Text (Current) = "@version";
+               begin
+                  Advance;
+                  if Peek_Kind /= Lexers.String_Token then
+                     Reject (Malformed_Syntax, Directive_Production);
+                  elsif Lexers.Form (Current) = Lexers.Long_Quoted then
+                     --  A version is a short-quoted string; the long form
+                     --  is admitted elsewhere but not here.
+                     Reject (Malformed_Syntax, Directive_Production);
+                  end if;
+                  Advance;
+                  if Terminated then
+                     Expect (Lexers.Dot_Token, Directive_Production);
+                  end if;
+               end;
 
             when others =>
                Reject (Malformed_Syntax, Directive_Production);
@@ -925,7 +937,10 @@ package body Flyology_RDF.Turtle_Parsers is
             declare
                Subject : constant Terms.Term := Parse_Property_List;
             begin
-               if Peek_Kind /= Lexers.Dot_Token and then not At_End then
+               if Peek_Kind not in Lexers.Dot_Token
+                                 | Lexers.Close_Brace_Token
+                 and then not At_End
+               then
                   Parse_Predicate_Object_List (Subject);
                end if;
             end;
@@ -1009,6 +1024,13 @@ package body Flyology_RDF.Turtle_Parsers is
                        (Document_Blank_Label (Lexers.Text (Current)));
                      Into.Graph_Is_Blank := True;
                      Advance;
+                  when Lexers.Open_Bracket_Token =>
+                     Advance;
+                     Expect (Lexers.Close_Bracket_Token,
+                             Graph_Block_Production);
+                     Into.Current_Graph :=
+                       Unbounded.To_Unbounded_String (Fresh_Blank_Label);
+                     Into.Graph_Is_Blank := True;
                   when others =>
                      Reject (Malformed_Syntax, Graph_Block_Production);
                end case;
@@ -1047,10 +1069,17 @@ package body Flyology_RDF.Turtle_Parsers is
             Into.Graph_Is_Blank := False;
 
          when Lexers.IRI_Reference_Token | Lexers.Prefixed_Name_Token
-            | Lexers.Blank_Label_Token =>
-            if Next + 1 <= Tokens.Last_Index
-              and then Lexers.Kind (Tokens (Next + 1))
-                       = Lexers.Open_Brace_Token
+            | Lexers.Blank_Label_Token | Lexers.Open_Bracket_Token =>
+            if (Peek_Kind = Lexers.Open_Bracket_Token
+                and then Next + 2 <= Tokens.Last_Index
+                and then Lexers.Kind (Tokens (Next + 1))
+                         = Lexers.Close_Bracket_Token
+                and then Lexers.Kind (Tokens (Next + 2))
+                         = Lexers.Open_Brace_Token)
+              or else (Peek_Kind /= Lexers.Open_Bracket_Token
+                       and then Next + 1 <= Tokens.Last_Index
+                       and then Lexers.Kind (Tokens (Next + 1))
+                                = Lexers.Open_Brace_Token)
             then
                --  A labelled graph block, written without the keyword.
                if Into.Syntax_Data /= TriG_Syntax then
@@ -1070,6 +1099,11 @@ package body Flyology_RDF.Turtle_Parsers is
                         Into.Current_Graph := Unbounded.To_Unbounded_String
                           (IRIs.To_UTF_8 (Expand (Current)));
                         Into.Graph_Is_Blank := False;
+                     when Lexers.Open_Bracket_Token =>
+                        Advance;
+                        Into.Current_Graph :=
+                          Unbounded.To_Unbounded_String (Fresh_Blank_Label);
+                        Into.Graph_Is_Blank := True;
                      when others =>
                         Into.Current_Graph := Unbounded.To_Unbounded_String
                           (Document_Blank_Label (Lexers.Text (Current)));
@@ -1143,10 +1177,28 @@ package body Flyology_RDF.Turtle_Parsers is
          return True;
       end if;
 
+      --  The same, with an anonymous node: "[] { ... }".
+      if Natural (Tokens.Length) >= 3
+        and then Lexers.Kind (Tokens.First_Element)
+                 = Lexers.Open_Bracket_Token
+        and then Lexers.Kind (Tokens (Tokens.First_Index + 1))
+                 = Lexers.Close_Bracket_Token
+        and then Lexers.Kind (Tokens (Tokens.First_Index + 2))
+                 = Lexers.Open_Brace_Token
+      then
+         return True;
+      end if;
+
       case Lexers.Kind (Tokens.First_Element) is
          when Lexers.Sparql_Prefix_Token =>
             return Natural (Tokens.Length) = 3;
-         when Lexers.Sparql_Base_Token | Lexers.Version_Directive_Token =>
+         when Lexers.Sparql_Base_Token =>
+            return Natural (Tokens.Length) = 2;
+         when Lexers.Version_Directive_Token =>
+            --  The at-form carries a terminator; the keyword form does not.
+            if Lexers.Text (Tokens.First_Element) = "@version" then
+               return Natural (Tokens.Length) = 3;
+            end if;
             return Natural (Tokens.Length) = 2;
          when Lexers.Open_Brace_Token | Lexers.Close_Brace_Token =>
             return True;

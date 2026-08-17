@@ -869,6 +869,13 @@ package body Flyology_RDF.Lexers is
             elsif Word = "base" then
                Emit (Base_Directive_Token);
                return;
+            elsif Word = "version" then
+               --  Turtle 1.2 has both "@version" and the keyword form.
+               --  Marking which was written lets the grammar require the
+               --  terminator that only the at-form carries.
+               Buffer := Unbounded.To_Unbounded_String ("@version");
+               Emit (Version_Directive_Token);
+               return;
             elsif Dialect = N3_Dialect and then Word = "forAll" then
                Emit (For_All_Token);
                return;
