@@ -14,6 +14,7 @@ with Ada.Text_IO;
 with Flyology_RDF.Datasets;
 with Flyology_RDF.Quads;
 with Flyology_RDF.Turtle_Parsers;
+with Flyology_RDF.Turtle_Writers;
 
 procedure Roundtrip_Tests is
 
@@ -22,6 +23,7 @@ procedure Roundtrip_Tests is
    package Datasets renames Flyology_RDF.Datasets;
    package Quads renames Flyology_RDF.Quads;
    package Parsers renames Flyology_RDF.Turtle_Parsers;
+   package Writers renames Flyology_RDF.Turtle_Writers;
 
    use type Datasets.Dataset;
    use type Parsers.Parse_Status;
@@ -256,6 +258,70 @@ begin
       Check (Second = Third, "the round trip reaches a fixed point");
       Check_Equal (Datasets.To_NQuads (Third), Datasets.To_NQuads (Second),
                    "and is byte-stable thereafter");
+   end;
+
+   ------------------------------------------------------------------
+   --  Through Turtle, which abbreviates, and back
+   ------------------------------------------------------------------
+   declare
+      Source : constant String :=
+        "@prefix ex: <http://example.org/> ." & ASCII.LF
+        & "ex:s a ex:Thing ;" & ASCII.LF
+        & "  ex:p ""text""@en , 42 , ex:o ;" & ASCII.LF
+        & "  ex:q [ ex:r ""nested"" ] ." & ASCII.LF
+        & "ex:t ex:u ex:v ." & ASCII.LF
+        & "GRAPH ex:g { ex:x ex:y ex:z . ex:x ex:y2 ex:z2 }" & ASCII.LF;
+
+      Prefixes : Writers.Prefix_Map := Writers.No_Prefixes;
+      First, Second, Third : Datasets.Dataset;
+      Ok : Boolean;
+      Ignored : Parsers.Diagnostic_Code;
+   begin
+      Writers.Bind (Prefixes, "ex", "http://example.org/");
+
+      Load (Source, Parsers.TriG_Syntax, First, Ok, Ignored);
+      Check (Ok, "the Turtle source parses");
+
+      --  Abbreviated output has to parse back to the same statements. A
+      --  prefix binding that produced an illegal local name, or a grouping
+      --  that lost an object, would show up here and nowhere else.
+      Load (Writers.To_TriG (First, Prefixes), Parsers.TriG_Syntax,
+            Second, Ok, Ignored);
+      Check (Ok, "its abbreviated TriG output parses back");
+      Check (First = Second, "abbreviated TriG round trips exactly");
+
+      Load (Writers.To_TriG (Second, Prefixes), Parsers.TriG_Syntax,
+            Third, Ok, Ignored);
+      Check (Second = Third, "and is a fixed point");
+
+      --  Unabbreviated output must agree with abbreviated output, so the
+      --  prefix machinery cannot change what a document means.
+      Load (Writers.To_TriG (First), Parsers.TriG_Syntax,
+            Second, Ok, Ignored);
+      Check (Ok, "unabbreviated TriG output parses back");
+      Check (First = Second, "prefixes do not change the statements");
+   end;
+
+   --  A dataset holding a named graph cannot be written as Turtle.
+   declare
+      Data : Datasets.Dataset;
+      Ok : Boolean;
+      Ignored : Parsers.Diagnostic_Code;
+      Refused : Boolean := False;
+   begin
+      Load ("<http://example.org/s> <http://example.org/p> "
+            & "<http://example.org/o> <http://example.org/g> .",
+            Parsers.NQuads_Syntax, Data, Ok, Ignored);
+      Check (Ok, "the named-graph source parses");
+      declare
+         Text : constant String := Writers.To_Turtle (Data);
+      begin
+         Check (Text'Length = 0, "unreachable");
+      end;
+   exception
+      when Constraint_Error =>
+         Refused := True;
+         Check (Refused, "Turtle refuses a dataset with a named graph");
    end;
 
    IO.Put_Line ("  checks              " & Checks'Image);
