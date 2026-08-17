@@ -147,6 +147,11 @@ package body Flyology_N3.Parsers is
       --  pass, so labels would grow instead of settling.
       function Document_Blank (Raw : String) return Model.Term is
       begin
+         --  A bare "_:" is an existential with no name of its own, so it
+         --  gets one that cannot collide.
+         if Raw'Length = 0 then
+            return Fresh_Blank;
+         end if;
          if not Document_Labels.Contains (Raw) then
             Document_Labels.Insert (Raw);
          end if;
@@ -173,6 +178,12 @@ package body Flyology_N3.Parsers is
          Key : constant String := Lexers.Prefix (Value);
       begin
          if not Prefixes.Contains (Key) then
+            --  An undeclared empty prefix names the document itself, which
+            --  is how N3 has always read ":x" in a file that never said
+            --  what ":" is. Any other undeclared prefix is an error.
+            if Key = "" then
+               return Resolve ("#" & Lexers.Text (Value));
+            end if;
             Fail ("undefined prefix """ & Key & """");
          end if;
          return Resolve (Prefixes.Element (Key) & Lexers.Text (Value));
@@ -390,6 +401,35 @@ package body Flyology_N3.Parsers is
          Reversed  : out Boolean) return Model.Term is
       begin
          Reversed := False;
+
+         --  N3 lets a predicate be written in either direction: "has :p"
+         --  reads forwards and "is :p of" reads backwards, stating the
+         --  same triple with its ends exchanged.
+         if Peek = Lexers.Keyword_Token then
+            declare
+               Word : constant String := Lexers.Text (Current);
+            begin
+               if Word = "has" then
+                  Advance;
+                  return Parse_Expression (Into);
+               elsif Word = "is" then
+                  Advance;
+                  declare
+                     Verb : constant Model.Term := Parse_Expression (Into);
+                  begin
+                     if Peek /= Lexers.Keyword_Token
+                       or else Lexers.Text (Current) /= "of"
+                     then
+                        Fail ("expected ""of"" after ""is""");
+                     end if;
+                     Advance;
+                     Reversed := True;
+                     return Verb;
+                  end;
+               end if;
+            end;
+         end if;
+
          case Peek is
             when Lexers.A_Token =>
                Advance;

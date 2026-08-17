@@ -1074,11 +1074,12 @@ package body Flyology_RDF.Lexers is
                Emit (Graph_Token);
             elsif Upper = "VERSION" then
                Emit (Version_Directive_Token);
-            elsif Dialect = SPARQL_Dialect then
-               --  SPARQL has around a hundred keywords and they are not
-               --  reserved. Classifying them here would put the language's
-               --  vocabulary in the scanner and make every addition a
-               --  scanner change, so the word is handed over as written.
+            elsif Dialect /= RDF_Dialect then
+               --  SPARQL has around a hundred keywords and N3 has "is",
+               --  "of" and "has"; none are reserved. Classifying them here
+               --  would put each language's vocabulary in the scanner and
+               --  make every addition a scanner change, so the word is
+               --  handed over as written and the grammar decides.
                Emit (Keyword_Token);
             else
                Fail (Unexpected_Character);
