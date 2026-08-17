@@ -876,6 +876,21 @@ package body Flyology_RDF.Lexers is
                Buffer := Unbounded.To_Unbounded_String ("@version");
                Emit (Version_Directive_Token);
                return;
+            elsif Dialect = N3_Dialect
+              and then Word in "true" | "false"
+            then
+               --  N3 spells several keywords with a leading at-sign, and
+               --  they mean what the bare words mean.
+               Emit (Boolean_Token);
+               return;
+            elsif Dialect = N3_Dialect and then Word = "a" then
+               Emit (A_Token);
+               return;
+            elsif Dialect = N3_Dialect
+              and then Word in "is" | "of" | "has"
+            then
+               Emit (Keyword_Token);
+               return;
             elsif Dialect = N3_Dialect and then Word = "forAll" then
                Emit (For_All_Token);
                return;
@@ -1234,7 +1249,12 @@ package body Flyology_RDF.Lexers is
                Fail (Invalid_Encoding);
                return;
             end if;
-            if Scalar = 16#3D# and then Dialect = N3_Dialect then
+            if Scalar = 16#2D# and then Dialect = N3_Dialect then
+               --  "<-" cannot begin an IRI, because a scheme starts with a
+               --  letter, so this needs no backtracking either.
+               Step (Scalar, Length);
+               Emit (Backward_Path_Token);
+            elsif Scalar = 16#3D# and then Dialect = N3_Dialect then
                --  '<=' cannot begin an IRI, because a scheme must start
                --  with a letter, so this needs no backtracking.
                Step (Scalar, Length);

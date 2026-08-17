@@ -80,7 +80,7 @@ not a verdict:
 | Suite | Examined | Rejected valid | Accepted invalid | Wrong result |
 | --- | --- | --- | --- | --- |
 | RDF 1.1 and 1.2 | 1050 | **0** | **0** | **0** |
-| Notation3 syntax | 1193 | 24 | 2 | — |
+| Notation3 syntax | 1193 | 15 | 2 | — |
 | SPARQL 1.1 syntax | 488 | 6 | 8 | — |
 
 Corpora are pinned in `scripts/provision-oracles.sh`; the runs above are

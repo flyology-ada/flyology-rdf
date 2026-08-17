@@ -403,8 +403,16 @@ package body Flyology_N3.Parsers is
          Reversed := False;
 
          --  N3 lets a predicate be written in either direction: "has :p"
-         --  reads forwards and "is :p of" reads backwards, stating the
-         --  same triple with its ends exchanged.
+         --  reads forwards, "is :p of" and ":s <- :p :o" read backwards,
+         --  each stating the same triple with its ends exchanged.
+         if Peek = Lexers.Backward_Path_Token then
+            --  In verb position this is the reverse arrow; after a term it
+            --  is the path operator, and the two never meet.
+            Advance;
+            Reversed := True;
+            return Parse_Expression (Into);
+         end if;
+
          if Peek = Lexers.Keyword_Token then
             declare
                Word : constant String := Lexers.Text (Current);
@@ -590,11 +598,15 @@ package body Flyology_N3.Parsers is
                declare
                   Subject : constant Model.Term := Parse_Expression (Into);
                begin
+                  --  A term with no predicates is a statement in N3. It
+                  --  may end at its own terminator, or at the brace that
+                  --  closes the formula holding it, which is where the
+                  --  last statement of a formula may leave the terminator
+                  --  out.
                   if Peek = Lexers.Dot_Token then
-                     --  A bare term is a legal N3 statement only when it
-                     --  came from a path or property list, which already
-                     --  contributed its statements.
                      Advance;
+                     return;
+                  elsif Peek = Lexers.Close_Brace_Token or else At_End then
                      return;
                   end if;
                   Parse_Property_List (Subject, Into);
