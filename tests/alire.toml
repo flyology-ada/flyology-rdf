@@ -5,7 +5,12 @@ licenses = "MIT OR Apache-2.0"
 authors = ["Yurii Rashkovskii"]
 maintainers = ["Yurii Rashkovskii <yrashk@gmail.com>"]
 maintainers-logins = ["yrashk"]
-executables = ["iri_strictness_gate", "terms_tests", "statement_tests"]
+executables = [
+  "iri_strictness_gate",
+  "terms_tests",
+  "statement_tests",
+  "cursor_tests",
+]
 
 [[depends-on]]
 flyology_rdf = "*"
