@@ -1,0 +1,12 @@
+/alire/
+/config/
+/obj/
+/lib/
+/bin/
+/tests/alire/
+/tests/config/
+/tests/obj/
+/tests/bin/
+*.ali
+*.o
+*.a

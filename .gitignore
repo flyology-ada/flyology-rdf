@@ -21,3 +21,11 @@
 *.a
 *.dSYM/
 __pycache__/
+/n3/alire/
+/n3/config/
+/n3/obj/
+/n3/lib/
+/n3/tests/alire/
+/n3/tests/config/
+/n3/tests/obj/
+/n3/tests/bin/

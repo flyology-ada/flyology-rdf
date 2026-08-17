@@ -1,0 +1,14 @@
+name = "flyology_n3_tests"
+description = "Test programs for flyology_n3"
+version = "0.1.0-dev"
+licenses = "MIT OR Apache-2.0"
+authors = ["Yurii Rashkovskii"]
+maintainers = ["Yurii Rashkovskii <yrashk@gmail.com>"]
+maintainers-logins = ["yrashk"]
+executables = ["n3_tests"]
+
+[[depends-on]]
+flyology_n3 = "*"
+
+[[pins]]
+flyology_n3 = { path = ".." }
