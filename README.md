@@ -80,7 +80,7 @@ not a verdict:
 | Suite | Examined | Rejected valid | Accepted invalid | Wrong result |
 | --- | --- | --- | --- | --- |
 | RDF 1.1 and 1.2 | 1050 | **0** | **0** | **0** |
-| Notation3 syntax | 149 | 2 | 3 | — |
+| Notation3 syntax | 1193 | 70 | 1 | — |
 | SPARQL 1.1 syntax | 488 | 22 | 27 | — |
 
 Corpora are pinned in `scripts/provision-oracles.sh`; the runs above are
@@ -88,7 +88,7 @@ against those pins.
 
 What cannot be graded is counted as skipped, not passed: 811 SPARQL
 evaluation entries need a query engine, 83 more are SPARQL Update rather
-than queries, and 148 N3 entries need a reasoner. RDF evaluation entries
+than queries, and 193 N3 entries need a reasoner. RDF evaluation entries
 *are* run, and compared by RDFC-1.0 canonical form rather than by blank
 node label.
 

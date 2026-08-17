@@ -106,6 +106,22 @@ procedure N3_Conformance is
       return Unbounded.To_String (Buffer);
    end Read_File;
 
+   Manifest_Base : constant String := "http://example.org/manifest/";
+
+   --  An action is a reference relative to its manifest, and in this suite
+   --  it often names a subdirectory. Keeping only the last segment finds
+   --  nothing; the whole remainder after the base is the path.
+   function Relative_Path (Value : String) return String is
+   begin
+      if Value'Length > Manifest_Base'Length
+        and then Value (Value'First .. Value'First + Manifest_Base'Length - 1)
+                 = Manifest_Base
+      then
+         return Value (Value'First + Manifest_Base'Length .. Value'Last);
+      end if;
+      return Value;
+   end Relative_Path;
+
    function Local_Name (Value : String) return String is
       Cut : Natural := 0;
    begin
@@ -185,8 +201,7 @@ procedure N3_Conformance is
 
       declare
          Path : constant String :=
-           Ada.Directories.Compose
-             (Directory, Local_Name (Actions.Element (Subject)));
+           Directory & "/" & Relative_Path (Actions.Element (Subject));
       begin
          if not Ada.Directories.Exists (Path) then
             Skipped_Missing := Skipped_Missing + 1;
@@ -243,7 +258,7 @@ procedure N3_Conformance is
       Parser : RDF_Parsers.Parser :=
         RDF_Parsers.Create
           (Source_Name => "manifest",
-           Base_IRI    => "http://example.org/manifest/",
+           Base_IRI    => Manifest_Base,
            Syntax      => RDF_Parsers.Turtle_Syntax);
    begin
       RDF_Parsers.Feed (Parser, Read_File (Path), Sink);
@@ -283,6 +298,13 @@ procedure N3_Conformance is
             if Name /= "." and then Name /= ".." and then Name /= ".git" then
                if Ada.Directories.Kind (Item) = Ada.Directories.Directory then
                   Walk (Ada.Directories.Full_Name (Item));
+               elsif Name'Length > 12
+                 and then Name (Name'First .. Name'First + 8) = "manifest-"
+                 and then Name (Name'Last - 3 .. Name'Last) = ".ttl"
+               then
+                  --  The reasoner manifests are read too; their entries
+                  --  are not syntax entries and are counted as skipped.
+                  Run_Manifest (Ada.Directories.Full_Name (Item));
                elsif Name = "manifest.ttl" then
                   Run_Manifest (Ada.Directories.Full_Name (Item));
                end if;
@@ -292,7 +314,14 @@ procedure N3_Conformance is
       Ada.Directories.End_Search (Search);
    end Walk;
 
-   Corpus : constant String := "../../tests/data/w3c-n3-tests";
+   --  The N3 suites, and only those. The repository also carries a Turtle
+   --  conformance suite, and grading it here would measure the wrong thing:
+   --  N3 is a superset, so a document that is correctly bad for Turtle --
+   --  "@forAll", "is ... of" -- is perfectly good N3. Its manifests are
+   --  also named manifest-parser.ttl and the like rather than plainly
+   --  manifest.ttl, which is why matching only the plain name found the
+   --  Turtle suite and none of the N3 one.
+   Corpus : constant String := "../../tests/data/w3c-n3-tests/N3Tests";
 
 begin
    IO.Put_Line ("N3 conformance");
