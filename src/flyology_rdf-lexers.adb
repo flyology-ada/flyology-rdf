@@ -1240,44 +1240,69 @@ package body Flyology_RDF.Lexers is
                   return;
                end;
             end if;
-            Step (Scalar, Length);
-            Peek (Text, Walk_Index, Scalar, Length, Look);
-            if Look = Partial or else Look = Exhausted then
-               Want_More;
-               return;
-            elsif Look = Bad then
-               Fail (Invalid_Encoding);
-               return;
-            end if;
-            if Scalar = 16#2D# and then Dialect = N3_Dialect then
-               --  "<-" cannot begin an IRI, because a scheme starts with a
-               --  letter, so this needs no backtracking either.
+            declare
+               Saved_Position : constant Cursors.Cursor_State :=
+                 Walk_Position;
+               Saved_Index    : constant Positive := Walk_Index;
+            begin
                Step (Scalar, Length);
-               Emit (Backward_Path_Token);
-            elsif Scalar = 16#3D# and then Dialect = N3_Dialect then
-               --  '<=' cannot begin an IRI, because a scheme must start
-               --  with a letter, so this needs no backtracking.
-               Step (Scalar, Length);
-               Emit (Implied_By_Token);
-            elsif Scalar = 16#3C# then           --  '<<'
-               Step (Scalar, Length);
-               Peek_Token_End (Walk_Index, Scalar, Length, Look);
+               Peek (Text, Walk_Index, Scalar, Length, Look);
                if Look = Partial or else Look = Exhausted then
-                  Incomplete;
+                  Want_More;
                   return;
                elsif Look = Bad then
                   Fail (Invalid_Encoding);
                   return;
                end if;
-               if Scalar = 16#28# then        --  '<<('
+               if Scalar = 16#3C# then           --  '<<'
                   Step (Scalar, Length);
-                  Emit (Open_Triple_Term_Token);
+                  Peek_Token_End (Walk_Index, Scalar, Length, Look);
+                  if Look = Partial or else Look = Exhausted then
+                     Incomplete;
+                     return;
+                  elsif Look = Bad then
+                     Fail (Invalid_Encoding);
+                     return;
+                  end if;
+                  if Scalar = 16#28# then        --  '<<('
+                     Step (Scalar, Length);
+                     Emit (Open_Triple_Term_Token);
+                  else
+                     Emit (Open_Quoted_Token);
+                  end if;
+               elsif Dialect = N3_Dialect
+                 and then Scalar in 16#2D# | 16#3D#
+               then
+                  --  "<-" reverses a predicate and "^" steps backwards
+                  --  along one. They are different operators and share
+                  --  no position, so they are different tokens.
+                  --  "<-" and "<=" are operators, and "<-s>" and "<=s>"
+                  --  are relative IRIs. Only the whole token tells them
+                  --  apart, so this backtracks as the SPARQL branch
+                  --  above does: an IRI reference admits neither a space
+                  --  nor a '<', so if one scans here it was an IRI.
+                  declare
+                     Operator : constant Token_Kind :=
+                       (if Scalar = 16#2D# then Reverse_Arrow_Token
+                        else Implied_By_Token);
+                     Second   : constant Scalar_Value := Scalar;
+                  begin
+                     Scan_IRI_Reference;
+                     if Status = Token_Found
+                       or else Status = Needs_More_Input
+                     then
+                        return;
+                     end if;
+                     Walk_Position := Saved_Position;
+                     Walk_Index := Saved_Index;
+                     Step (16#3C#, 1);
+                     Step (Second, 1);
+                     Emit (Operator);
+                  end;
                else
-                  Emit (Open_Quoted_Token);
+                  Scan_IRI_Reference;
                end if;
-            else
-               Scan_IRI_Reference;
-            end if;
+            end;
 
          when 16#22# | 16#27# =>              --  '"' or '''
             declare

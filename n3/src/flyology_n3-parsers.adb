@@ -344,7 +344,28 @@ package body Flyology_N3.Parsers is
             when Lexers.Open_Bracket_Token =>
                Advance;
                declare
-                  Subject : constant Model.Term := Fresh_Blank;
+                  --  "[ id <iri> ... ]" states its properties about the
+                  --  IRI named there rather than about a fresh node. The
+                  --  bracket still groups the property list; it just no
+                  --  longer introduces anything for it to be about.
+                  function Bracket_Subject return Model.Term is
+                  begin
+                     if Peek = Lexers.Keyword_Token
+                       and then Lexers.Text (Current) = "id"
+                     then
+                        Advance;
+                        if Peek not in Lexers.IRI_Reference_Token
+                                     | Lexers.Prefixed_Name_Token
+                        then
+                           Fail ("id names the subject, and a name is an"
+                                 & " IRI");
+                        end if;
+                        return Parse_Path_Item (Into);
+                     end if;
+                     return Fresh_Blank;
+                  end Bracket_Subject;
+
+                  Subject : constant Model.Term := Bracket_Subject;
                begin
                   if Peek /= Lexers.Close_Bracket_Token then
                      Parse_Property_List (Subject, Into);
@@ -405,9 +426,7 @@ package body Flyology_N3.Parsers is
          --  N3 lets a predicate be written in either direction: "has :p"
          --  reads forwards, "is :p of" and ":s <- :p :o" read backwards,
          --  each stating the same triple with its ends exchanged.
-         if Peek = Lexers.Backward_Path_Token then
-            --  In verb position this is the reverse arrow; after a term it
-            --  is the path operator, and the two never meet.
+         if Peek = Lexers.Reverse_Arrow_Token then
             Advance;
             Reversed := True;
             return Parse_Expression (Into);

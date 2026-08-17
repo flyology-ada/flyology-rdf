@@ -68,6 +68,7 @@ package Flyology_RDF.Lexers is
       Equals_Token,             --  =
       Forward_Path_Token,       --  !
       Backward_Path_Token,      --  ^
+      Reverse_Arrow_Token,      --  <-
       For_All_Token,            --  @forAll
       For_Some_Token,           --  @forSome
 
