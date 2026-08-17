@@ -79,8 +79,8 @@ not a verdict:
 
 | Suite | Examined | Rejected valid | Accepted invalid | Wrong result |
 | --- | --- | --- | --- | --- |
-| RDF 1.1 and 1.2 | 1050 | 15 | 24 | 4 |
-| Notation3 syntax | 149 | 3 | 4 | — |
+| RDF 1.1 and 1.2 | 1050 | 14 | 10 | 4 |
+| Notation3 syntax | 149 | 2 | 3 | — |
 | SPARQL 1.1 syntax | 571 | 99 | 87 | — |
 
 Corpora are pinned in `scripts/provision-oracles.sh`; the runs above are

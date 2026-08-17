@@ -637,7 +637,9 @@ package body Flyology_RDF.Lexers is
                         (Is_PN_Chars_U (Scalar)
                          or else Is_Digit (Scalar)
                          or else (Scalar = 16#3A# and then not Blank_Label))
-                   else Is_PN_Chars (Scalar) or else Scalar = 16#3A#)
+                   else Is_PN_Chars (Scalar)
+                        or else (Scalar = 16#3A#
+                                 and then not Blank_Label))
             then
                Append_Scalar (Buffer, Scalar);
                Step (Scalar, Length);

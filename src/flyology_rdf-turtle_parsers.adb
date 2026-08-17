@@ -10,6 +10,7 @@ package body Flyology_RDF.Turtle_Parsers is
    use type Lexers.Token_Kind;
    use type Lexers.Direction_Value;
    use type Terms.Term_Kind;
+   use type Lexers.String_Form;
 
    XSD_String  : constant String :=
      "http://www.w3.org/2001/XMLSchema#string";
@@ -211,7 +212,9 @@ package body Flyology_RDF.Turtle_Parsers is
       function Resolve (Reference : String; What : Production_Kind)
         return IRIs.IRI is
       begin
-         if Unbounded.Length (Into.Base_Data) = 0 then
+         if Is_Line_Based (Into.Syntax_Data)
+           or else Unbounded.Length (Into.Base_Data) = 0
+         then
             if not IRIs.Is_Valid (Reference) then
                Reject (Invalid_IRI, What);
             end if;
@@ -857,6 +860,10 @@ package body Flyology_RDF.Turtle_Parsers is
                when Lexers.String_Token =>
                   if not Allow_Literal then
                      Reject (Malformed_Syntax, What);
+                  elsif Lexers.Form (Current) = Lexers.Long_Quoted then
+                     --  The long form belongs to Turtle, not to the
+                     --  line-based grammars.
+                     Reject (Malformed_Syntax, Literal_Production);
                   end if;
                   return Parse_Literal;
                when Lexers.Open_Triple_Term_Token =>
@@ -969,6 +976,11 @@ package body Flyology_RDF.Turtle_Parsers is
          when Lexers.Prefix_Directive_Token | Lexers.Base_Directive_Token
             | Lexers.Sparql_Prefix_Token | Lexers.Sparql_Base_Token
             | Lexers.Version_Directive_Token =>
+            if Into.In_Graph_Block then
+               --  A directive is a document-level statement; inside a
+               --  graph block it is not a statement at all.
+               Reject (Malformed_Syntax, Graph_Block_Production);
+            end if;
             Parse_Directive;
 
          when Lexers.Graph_Token =>
