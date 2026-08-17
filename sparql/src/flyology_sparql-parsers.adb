@@ -352,6 +352,12 @@ package body Flyology_SPARQL.Parsers is
          declare
             Term : constant Syntax.Node_Reference := Parse_Term;
          begin
+            if Syntax.Kind (Syntax.To_Query (Tree), Term)
+               = Syntax.Blank_Node
+            then
+               Fail ("a blank node has no meaning in an expression");
+            end if;
+
             if Peek = Lexers.Open_Paren_Token
               and then Syntax.Kind (Syntax.To_Query (Tree), Term)
                        in Syntax.IRI_Node | Syntax.Prefixed_Node
@@ -585,7 +591,16 @@ package body Flyology_SPARQL.Parsers is
                   return Inner;
                end;
             end if;
-            return Parse_Term;
+            declare
+               Result : constant Syntax.Node_Reference := Parse_Term;
+            begin
+               if Syntax.Kind (Syntax.To_Query (Tree), Result)
+                  in Syntax.Literal_Node | Syntax.Blank_Node
+               then
+                  Fail ("a predicate is an IRI, a variable or a path");
+               end if;
+               return Result;
+            end;
          end Parse_Path_Primary;
 
          function Parse_Path_Unary return Syntax.Node_Reference is
@@ -1126,6 +1141,14 @@ package body Flyology_SPARQL.Parsers is
 
             elsif At_Keyword ("FILTER") then
                Advance;
+               if Peek not in Lexers.Open_Paren_Token | Lexers.Keyword_Token
+                            | Lexers.IRI_Reference_Token
+                            | Lexers.Prefixed_Name_Token
+               then
+                  --  A constraint is a bracketed expression or a call;
+                  --  a bare term is neither.
+                  Fail ("FILTER takes a bracketed expression or a call");
+               end if;
                declare
                   Item : constant Syntax.Node_Reference :=
                     Node (Syntax.Filter_Node);

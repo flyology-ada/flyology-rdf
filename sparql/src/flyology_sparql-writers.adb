@@ -226,8 +226,25 @@ package body Flyology_SPARQL.Writers is
                Put ((1 => ASCII.LF));
 
             when Syntax.Filter_Node =>
-               Put (Indent (Depth) & "FILTER "
-                    & Render (Syntax.Child (Value, Node, 1)) & (1 => ASCII.LF));
+               --  A constraint is a bracketed expression or a call, so an
+               --  operator expression has to be bracketed on the way out
+               --  or it will not read back.
+               declare
+                  Inner : constant Syntax.Node_Reference :=
+                    Syntax.Child (Value, Node, 1);
+                  Text  : constant String := Render (Inner);
+               begin
+                  if Syntax.Kind (Value, Inner) = Syntax.Call_Node
+                    or else (Text'Length > 0
+                             and then Text (Text'First) = '(')
+                  then
+                     Put (Indent (Depth) & "FILTER " & Text
+                          & (1 => ASCII.LF));
+                  else
+                     Put (Indent (Depth) & "FILTER (" & Text & ")"
+                          & (1 => ASCII.LF));
+                  end if;
+               end;
 
             when Syntax.Reified_Node =>
                Put (Indent (Depth) & Render (Node) & " ." & (1 => ASCII.LF));
