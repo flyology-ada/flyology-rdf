@@ -12,6 +12,7 @@ executables = [
   "cursor_tests",
   "lexer_tests",
   "parser_tests",
+  "serialization_tests",
 ]
 
 [[depends-on]]
