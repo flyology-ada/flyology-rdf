@@ -81,7 +81,7 @@ not a verdict:
 | --- | --- | --- | --- | --- |
 | RDF 1.1 and 1.2 | 1050 | **0** | **0** | **0** |
 | Notation3 syntax | 1193 | 24 | 2 | — |
-| SPARQL 1.1 syntax | 488 | 18 | 22 | — |
+| SPARQL 1.1 syntax | 488 | 6 | 22 | — |
 
 Corpora are pinned in `scripts/provision-oracles.sh`; the runs above are
 against those pins.

@@ -11,6 +11,7 @@
 --  reported as passing.
 
 with Ada.Command_Line;
+with Ada.Exceptions;
 with Ada.Containers.Indefinite_Ordered_Maps;
 with Ada.Containers.Indefinite_Ordered_Sets;
 with Ada.Directories;
@@ -208,6 +209,7 @@ procedure SPARQL_Conformance is
          declare
             Text      : constant String := Read_File (Path);
             Succeeded : Boolean := True;
+            Reason    : Unbounded.Unbounded_String;
          begin
             Examined := Examined + 1;
             Bytes_Parsed := Bytes_Parsed + Text'Length;
@@ -227,15 +229,19 @@ procedure SPARQL_Conformance is
                   pragma Unreferenced (Ignored);
                end;
             exception
-               when others =>
+               when Error : others =>
+                  --  Recording why sorts the divergences into causes
+                  --  rather than leaving a list of names.
                   Succeeded := False;
+                  Reason := Unbounded.To_Unbounded_String
+                    (Ada.Exceptions.Exception_Message (Error));
             end;
 
             if Wants_Accept and then not Succeeded then
                Unexpected_Reject := Unexpected_Reject + 1;
                Unbounded.Append
                  (Divergences,
-                  "    " & Entry_Name & ": rejected a valid document"
+                  "    " & Entry_Name & ": " & Unbounded.To_String (Reason)
                   & ASCII.LF);
             elsif not Wants_Accept and then Succeeded then
                Unexpected_Accept := Unexpected_Accept + 1;

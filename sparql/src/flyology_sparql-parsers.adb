@@ -411,9 +411,35 @@ package body Flyology_SPARQL.Parsers is
          return Left;
       end Parse_Multiplicative;
 
+      --  A numeric token that carries its own sign.
+      function At_Signed_Number return Boolean
+      is (Peek in Lexers.Integer_Token | Lexers.Decimal_Token
+                | Lexers.Double_Token
+          and then Lexers.Text (Current)'Length > 0
+          and then Lexers.Text (Current) (Lexers.Text (Current)'First)
+                   in '+' | '-');
+
       function Parse_Additive return Syntax.Node_Reference is
          Left : Syntax.Node_Reference := Parse_Multiplicative;
       begin
+         while At_Signed_Number loop
+            declare
+               Text : constant String := Lexers.Text (Current);
+               Operator : constant String := [1 => Text (Text'First)];
+               Result   : constant Syntax.Node_Reference :=
+                 Node (Syntax.Arithmetic_Node, Operator);
+               Operand  : constant Syntax.Node_Reference :=
+                 Node (Syntax.Literal_Node,
+                       Text (Text'First + 1 .. Text'Last),
+                       Lexers.Token_Kind'Image (Peek));
+            begin
+               Advance;
+               Syntax.Add_Child (Tree, Result, Left);
+               Syntax.Add_Child (Tree, Result, Operand);
+               Left := Result;
+            end;
+         end loop;
+
          while Peek in Lexers.Plus_Token | Lexers.Minus_Token loop
             declare
                Operator : constant String :=
@@ -872,6 +898,12 @@ package body Flyology_SPARQL.Parsers is
               or else Peek in Lexers.Dot_Token | Lexers.Close_Brace_Token
                             | Lexers.Close_Bracket_Token
                             | Lexers.Close_Annotation_Token;
+            --  A trailing semicolon may be followed by the next pattern
+            --  rather than by another predicate.
+            exit when Peek = Lexers.Keyword_Token
+              and then Upper (Lexers.Text (Current)) in
+                "OPTIONAL" | "FILTER" | "GRAPH" | "MINUS" | "BIND"
+                | "SERVICE" | "VALUES" | "UNION";
          end loop;
       end Parse_Predicate_Objects;
 
@@ -930,6 +962,76 @@ package body Flyology_SPARQL.Parsers is
       --  it belong to the caller, because the grammar lets a subquery be a
       --  group's whole content as well as one item within it.
       procedure Parse_Subselect (Item : Syntax.Node_Reference);
+
+      --  An inline data block. It may close a query as well as sit inside
+      --  a pattern, so it is written once and called from both.
+      function Parse_Values return Syntax.Node_Reference is
+         Item : constant Syntax.Node_Reference :=
+           Node (Syntax.Values_Node);
+         Vars : constant Syntax.Node_Reference :=
+           Node (Syntax.Projection_Node);
+      begin
+               --  Two spellings: one variable with bare values, or a
+               --  parenthesised list with parenthesised rows.
+               if Peek = Lexers.Open_Paren_Token then
+                  Advance;
+                  while Peek = Lexers.Variable_Token loop
+                     Syntax.Add_Child (Tree, Vars, Parse_Term);
+                  end loop;
+                  Expect (Lexers.Close_Paren_Token,
+                          "a closing parenthesis");
+                  Syntax.Add_Child (Tree, Item, Vars);
+                  Expect (Lexers.Open_Brace_Token, "an opening brace");
+                  while Peek = Lexers.Open_Paren_Token loop
+                     Advance;
+                     declare
+                        Row : constant Syntax.Node_Reference :=
+                          Node (Syntax.Projection_Node, "row");
+                     begin
+                        while Peek /= Lexers.Close_Paren_Token
+                          and then not At_End
+                        loop
+                           if At_Keyword ("UNDEF") then
+                              Advance;
+                              Syntax.Add_Child
+                                (Tree, Row,
+                                 Node (Syntax.Call_Node, "UNDEF"));
+                           else
+                              Syntax.Add_Child (Tree, Row, Parse_Term);
+                           end if;
+                        end loop;
+                        Expect (Lexers.Close_Paren_Token,
+                                "a closing parenthesis");
+                        Syntax.Add_Child (Tree, Item, Row);
+                     end;
+                  end loop;
+                  Expect (Lexers.Close_Brace_Token, "a closing brace");
+               else
+                  Syntax.Add_Child (Tree, Vars, Parse_Term);
+                  Syntax.Add_Child (Tree, Item, Vars);
+                  Expect (Lexers.Open_Brace_Token, "an opening brace");
+                  while Peek /= Lexers.Close_Brace_Token
+                    and then not At_End
+                  loop
+                     declare
+                        Row : constant Syntax.Node_Reference :=
+                          Node (Syntax.Projection_Node, "row");
+                     begin
+                        if At_Keyword ("UNDEF") then
+                           Advance;
+                           Syntax.Add_Child
+                             (Tree, Row,
+                              Node (Syntax.Call_Node, "UNDEF"));
+                        else
+                           Syntax.Add_Child (Tree, Row, Parse_Term);
+                        end if;
+                        Syntax.Add_Child (Tree, Item, Row);
+                     end;
+                  end loop;
+                  Expect (Lexers.Close_Brace_Token, "a closing brace");
+         end if;
+         return Item;
+      end Parse_Values;
 
       function Parse_Group return Syntax.Node_Reference is
          Result : constant Syntax.Node_Reference := Node (Syntax.Group_Node);
@@ -1011,73 +1113,7 @@ package body Flyology_SPARQL.Parsers is
 
             elsif At_Keyword ("VALUES") then
                Advance;
-               declare
-                  Item : constant Syntax.Node_Reference :=
-                    Node (Syntax.Values_Node);
-                  Vars : constant Syntax.Node_Reference :=
-                    Node (Syntax.Projection_Node);
-               begin
-                  --  Two spellings: one variable with bare values, or a
-                  --  parenthesised list with parenthesised rows.
-                  if Peek = Lexers.Open_Paren_Token then
-                     Advance;
-                     while Peek = Lexers.Variable_Token loop
-                        Syntax.Add_Child (Tree, Vars, Parse_Term);
-                     end loop;
-                     Expect (Lexers.Close_Paren_Token,
-                             "a closing parenthesis");
-                     Syntax.Add_Child (Tree, Item, Vars);
-                     Expect (Lexers.Open_Brace_Token, "an opening brace");
-                     while Peek = Lexers.Open_Paren_Token loop
-                        Advance;
-                        declare
-                           Row : constant Syntax.Node_Reference :=
-                             Node (Syntax.Projection_Node, "row");
-                        begin
-                           while Peek /= Lexers.Close_Paren_Token
-                             and then not At_End
-                           loop
-                              if At_Keyword ("UNDEF") then
-                                 Advance;
-                                 Syntax.Add_Child
-                                   (Tree, Row,
-                                    Node (Syntax.Call_Node, "UNDEF"));
-                              else
-                                 Syntax.Add_Child (Tree, Row, Parse_Term);
-                              end if;
-                           end loop;
-                           Expect (Lexers.Close_Paren_Token,
-                                   "a closing parenthesis");
-                           Syntax.Add_Child (Tree, Item, Row);
-                        end;
-                     end loop;
-                     Expect (Lexers.Close_Brace_Token, "a closing brace");
-                  else
-                     Syntax.Add_Child (Tree, Vars, Parse_Term);
-                     Syntax.Add_Child (Tree, Item, Vars);
-                     Expect (Lexers.Open_Brace_Token, "an opening brace");
-                     while Peek /= Lexers.Close_Brace_Token
-                       and then not At_End
-                     loop
-                        declare
-                           Row : constant Syntax.Node_Reference :=
-                             Node (Syntax.Projection_Node, "row");
-                        begin
-                           if At_Keyword ("UNDEF") then
-                              Advance;
-                              Syntax.Add_Child
-                                (Tree, Row,
-                                 Node (Syntax.Call_Node, "UNDEF"));
-                           else
-                              Syntax.Add_Child (Tree, Row, Parse_Term);
-                           end if;
-                           Syntax.Add_Child (Tree, Item, Row);
-                        end;
-                     end loop;
-                     Expect (Lexers.Close_Brace_Token, "a closing brace");
-                  end if;
-                  Syntax.Add_Child (Tree, Result, Item);
-               end;
+               Syntax.Add_Child (Tree, Result, Parse_Values);
 
             elsif Peek = Lexers.Open_Brace_Token
               and then Next + 1 <= Tokens.Last_Index
@@ -1277,6 +1313,24 @@ package body Flyology_SPARQL.Parsers is
          end if;
       end Parse_Dataset;
 
+      --  A query may close with an inline data block, which joins whatever
+      --  the pattern produced.
+      procedure Parse_Trailing_Values is
+      begin
+         if At_Keyword ("VALUES") then
+            Advance;
+            declare
+               Where : constant Syntax.Node_Reference :=
+                 Syntax.Where_Clause (Syntax.To_Query (Tree));
+               Data  : constant Syntax.Node_Reference := Parse_Values;
+            begin
+               if Where /= Syntax.No_Node then
+                  Syntax.Add_Child (Tree, Where, Data);
+               end if;
+            end;
+         end if;
+      end Parse_Trailing_Values;
+
       procedure Parse_Modifiers is
       begin
          if At_Keyword ("GROUP") then
@@ -1367,6 +1421,8 @@ package body Flyology_SPARQL.Parsers is
                exit;
             end if;
          end loop;
+
+         Parse_Trailing_Values;
       end Parse_Modifiers;
 
       procedure Parse_Select is
@@ -1514,12 +1570,25 @@ package body Flyology_SPARQL.Parsers is
                when Syntax.Group_Node | Syntax.Optional_Node
                   | Syntax.Union_Node | Syntax.Minus_Node
                   | Syntax.Graph_Node | Syntax.Service_Node =>
-                  Group_Depth := Group_Depth + 1;
-                  for Index in 1 .. Syntax.Child_Count (Query_Value, Node)
-                  loop
-                     Walk (Syntax.Child (Query_Value, Node, Index));
-                  end loop;
-                  Group_Depth := Group_Depth - 1;
+                  --  Scope runs one group at a time. A nested group starts
+                  --  with none of the enclosing group's variables, which is
+                  --  why a BIND inside one may name a variable bound
+                  --  outside it, and why the two branches of a UNION do not
+                  --  see each other. What the group binds joins the
+                  --  enclosing scope once it closes, so a BIND *after* it
+                  --  may not reuse those names.
+                  declare
+                     Enclosing : constant String_Sets.Set := Bound;
+                  begin
+                     Bound.Clear;
+                     Group_Depth := Group_Depth + 1;
+                     for Index in 1 .. Syntax.Child_Count (Query_Value, Node)
+                     loop
+                        Walk (Syntax.Child (Query_Value, Node, Index));
+                     end loop;
+                     Group_Depth := Group_Depth - 1;
+                     Bound.Union (Enclosing);
+                  end;
 
                when Syntax.Subquery_Node =>
                   --  A subquery has its own scope; nothing inside it
