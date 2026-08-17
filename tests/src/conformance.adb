@@ -220,6 +220,24 @@ procedure Conformance is
       Into := Result;
    end Build_Index;
 
+   --  Several entries resolve relative references against the document's
+   --  own location, so the base has to be the address the suite is
+   --  published at rather than a placeholder. It is derived from the
+   --  file's position in the checkout, which is the same thing.
+   Corpus_Base : constant String := "https://w3c.github.io/rdf-tests/";
+
+   function Published_Base (Directory : String) return String is
+      Marker : constant String := "w3c-rdf-tests/";
+      Cut    : constant Natural :=
+        Ada.Strings.Fixed.Index (Directory, Marker);
+   begin
+      if Cut = 0 then
+         return Corpus_Base;
+      end if;
+      return Corpus_Base
+        & Directory (Cut + Marker'Length .. Directory'Last) & "/";
+   end Published_Base;
+
    --  Turn a file IRI into a path relative to the manifest's directory.
    function Local_Path (Directory, Reference : String) return String is
       Name : constant String := Local_Name (Reference);
@@ -391,7 +409,7 @@ procedure Conformance is
       Catalogue : Index;
    begin
       Load (Text, Parsers.Turtle_Syntax,
-            "http://example.org/manifest/", Data, Succeeded);
+            Published_Base (Directory), Data, Succeeded);
       if not Succeeded then
          IO.Put_Line ("  could not read manifest: " & Path);
          return;
@@ -405,7 +423,7 @@ procedure Conformance is
       --  entry it does not type, or types one it does not list, should
       --  still be run rather than silently halved.
       for Subject of Catalogue.Subjects loop
-         Run_Entry (Directory, "http://example.org/manifest/",
+         Run_Entry (Directory, Published_Base (Directory),
                     Catalogue, Subject);
       end loop;
    end Run_Manifest;

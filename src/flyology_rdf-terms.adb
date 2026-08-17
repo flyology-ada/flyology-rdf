@@ -8,6 +8,8 @@ package body Flyology_RDF.Terms is
 
    RDF_Lang_String : constant String :=
      "http://www.w3.org/1999/02/22-rdf-syntax-ns#langString";
+   RDF_Dir_Lang_String : constant String :=
+     "http://www.w3.org/1999/02/22-rdf-syntax-ns#dirLangString";
    XSD_String : constant String :=
      "http://www.w3.org/2001/XMLSchema#string";
 
@@ -46,12 +48,19 @@ package body Flyology_RDF.Terms is
                Subtag_Length := 0;
             elsif Item in 'a' .. 'z' | 'A' .. 'Z' then
                Subtag_Length := Subtag_Length + 1;
+               --  No subtag runs past eight characters.
+               if Subtag_Length > 8 then
+                  return False;
+               end if;
             elsif Item in '0' .. '9' then
                --  Digits are permitted in continuation subtags only.
                if Index = Value'First then
                   return False;
                end if;
                Subtag_Length := Subtag_Length + 1;
+               if Subtag_Length > 8 then
+                  return False;
+               end if;
             else
                return False;
             end if;
@@ -164,6 +173,10 @@ package body Flyology_RDF.Terms is
       if Datatype = Language_String_Datatype then
          raise Invalid_Literal with
            "rdf:langString requires a language tag; use Language_Literal";
+      elsif IRIs.To_UTF_8 (Datatype) = RDF_Dir_Lang_String then
+         raise Invalid_Literal with
+           "rdf:dirLangString requires a language tag and a direction;"
+           & " use Directional_Literal";
       end if;
 
       return Build_Literal

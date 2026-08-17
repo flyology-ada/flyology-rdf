@@ -478,6 +478,18 @@ package body Flyology_RDF.Turtle_Parsers is
                Advance;
             when Lexers.Open_Quoted_Token =>
                Subject := Parse_Reified_Triple;
+            when Lexers.Open_Bracket_Token =>
+               --  "[]" is the anonymous blank node; a property list with
+               --  content is a different production and not admitted here.
+               if Next + 1 > Tokens.Last_Index
+                 or else Lexers.Kind (Tokens (Next + 1))
+                         /= Lexers.Close_Bracket_Token
+               then
+                  Reject (Malformed_Syntax, Subject_Production);
+               end if;
+               Advance;
+               Advance;
+               Subject := Terms.Blank_Node (Fresh_Blank_Label);
             when others =>
                Reject (Malformed_Syntax, Subject_Production);
          end case;
@@ -494,6 +506,16 @@ package body Flyology_RDF.Turtle_Parsers is
                | Lexers.Double_Token | Lexers.Boolean_Token
                | Lexers.Open_Triple_Term_Token | Lexers.Open_Quoted_Token =>
                Object := Parse_Object_Term;
+            when Lexers.Open_Bracket_Token =>
+               if Next + 1 > Tokens.Last_Index
+                 or else Lexers.Kind (Tokens (Next + 1))
+                         /= Lexers.Close_Bracket_Token
+               then
+                  Reject (Malformed_Syntax, Object_Production);
+               end if;
+               Advance;
+               Advance;
+               Object := Terms.Blank_Node (Fresh_Blank_Label);
             when others =>
                Reject (Malformed_Syntax, Object_Production);
          end case;

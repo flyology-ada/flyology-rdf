@@ -79,7 +79,7 @@ not a verdict:
 
 | Suite | Examined | Rejected valid | Accepted invalid | Wrong result |
 | --- | --- | --- | --- | --- |
-| RDF 1.1 and 1.2 | 1050 | 2 | 2 | 4 |
+| RDF 1.1 and 1.2 | 1050 | **0** | **0** | **0** |
 | Notation3 syntax | 149 | 2 | 3 | — |
 | SPARQL 1.1 syntax | 488 | 22 | 81 | — |
 
