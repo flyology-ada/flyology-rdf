@@ -258,8 +258,17 @@ package body Flyology_SPARQL.Parsers is
             begin
                --  Its components are terms, not expressions: a triple
                --  term quotes a statement, and a statement is made of
-               --  terms.
-               Syntax.Add_Child (Tree, Result, Parse_Term);
+               --  terms. The subject of a statement is never a literal.
+               declare
+                  Subject : constant Syntax.Node_Reference := Parse_Term;
+               begin
+                  if Syntax.Kind (Syntax.To_Query (Tree), Subject)
+                     = Syntax.Literal_Node
+                  then
+                     Fail ("a literal cannot be a subject");
+                  end if;
+                  Syntax.Add_Child (Tree, Result, Subject);
+               end;
                Syntax.Add_Child (Tree, Result, Parse_Term);
                Syntax.Add_Child (Tree, Result, Parse_Term);
                Expect (Lexers.Close_Triple_Term_Token,
@@ -1030,6 +1039,36 @@ package body Flyology_SPARQL.Parsers is
                   end loop;
                   Expect (Lexers.Close_Brace_Token, "a closing brace");
          end if;
+
+         declare
+            Width : constant Natural :=
+              Syntax.Child_Count (Syntax.To_Query (Tree), Vars);
+            Seen  : String_Sets.Set;
+            Built : constant Syntax.Query := Syntax.To_Query (Tree);
+         begin
+            for Index in 1 .. Width loop
+               declare
+                  Name : constant String :=
+                    Syntax.Text (Built, Syntax.Child (Built, Vars, Index));
+               begin
+                  if Seen.Contains (Name) then
+                     Fail ("?" & Name & " is bound twice by one VALUES");
+                  end if;
+                  Seen.Include (Name);
+               end;
+            end loop;
+
+            --  Each row supplies one value per variable; a row of another
+            --  length does not describe a binding.
+            for Index in 2 .. Syntax.Child_Count (Built, Item) loop
+               if Syntax.Child_Count
+                    (Built, Syntax.Child (Built, Item, Index)) /= Width
+               then
+                  Fail ("a VALUES row does not match the variable list");
+               end if;
+            end loop;
+         end;
+
          return Item;
       end Parse_Values;
 
@@ -1483,6 +1522,7 @@ package body Flyology_SPARQL.Parsers is
          Query_Value : constant Syntax.Query := Syntax.To_Query (Tree);
          Bound       : String_Sets.Set;
          Group_Depth : Natural := 0;
+         Group_Serial : Natural := 0;
          Labels      : String_Sets.Set;
 
          procedure Complain (Message : String) is
@@ -1529,7 +1569,7 @@ package body Flyology_SPARQL.Parsers is
                         then
                            declare
                               Tag : constant String :=
-                                Group_Depth'Image & ":"
+                                Group_Serial'Image & ":"
                                 & Syntax.Text (Query_Value, Part);
                               Bare : constant String :=
                                 Syntax.Text (Query_Value, Part);
@@ -1582,6 +1622,7 @@ package body Flyology_SPARQL.Parsers is
                   begin
                      Bound.Clear;
                      Group_Depth := Group_Depth + 1;
+                     Group_Serial := Group_Serial + 1;
                      for Index in 1 .. Syntax.Child_Count (Query_Value, Node)
                      loop
                         Walk (Syntax.Child (Query_Value, Node, Index));
