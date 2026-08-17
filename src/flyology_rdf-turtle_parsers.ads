@@ -1,5 +1,6 @@
 private with Ada.Containers.Indefinite_Vectors;
 private with Ada.Containers.Indefinite_Ordered_Maps;
+private with Ada.Containers.Indefinite_Ordered_Sets;
 private with Ada.Strings.Unbounded;
 private with Flyology_RDF.Lexers;
 
@@ -18,9 +19,25 @@ with Flyology_RDF.Quads;
 package Flyology_RDF.Turtle_Parsers is
 
    --  Which document grammar to accept.
+   --
+   --  The line-based grammars are here rather than in a package of their
+   --  own because they are a subset of this one down to the token level:
+   --  they reuse the same scanner, the same event sink, the same
+   --  diagnostics, and the same chunk-feeding machinery, and differ only in
+   --  which productions are admitted.
    --  @enum Turtle_Syntax Reject graph blocks and the GRAPH keyword
    --  @enum TriG_Syntax Accept Turtle statements and TriG graph blocks
-   type Syntax_Kind is (Turtle_Syntax, TriG_Syntax);
+   --  @enum NTriples_Syntax One absolute-IRI statement per line, no graph
+   --  @enum NQuads_Syntax N-Triples with an optional graph label
+   type Syntax_Kind is
+     (Turtle_Syntax, TriG_Syntax, NTriples_Syntax, NQuads_Syntax);
+
+   --  Report whether a grammar is one of the line-based ones, which admit
+   --  no directives, no abbreviations, and no relative references.
+   --  @param Value Grammar to classify
+   --  @return True for N-Triples and N-Quads
+   function Is_Line_Based (Value : Syntax_Kind) return Boolean
+   is (Value in NTriples_Syntax | NQuads_Syntax);
 
    --  Bounds a caller imposes on one parse.
    --  @field Maximum_Bytes Total input accepted
@@ -161,9 +178,12 @@ package Flyology_RDF.Turtle_Parsers is
 
    --  Begin a parse.
    --  @param Source_Name Name reported in diagnostics
-   --  @param Blank_Node_Prefix Prepended to every blank node label the
-   --     document introduces, so that labels from two documents parsed by
-   --     the same consumer cannot collide
+   --  @param Blank_Node_Prefix Prepended to every blank node label, both
+   --     those the document writes and those the parser generates, so that
+   --     labels from two documents parsed by the same consumer cannot
+   --     collide. Within one document the parser keeps its generated labels
+   --     clear of the document's own, so reading back what this crate wrote
+   --     renames nothing and is a fixed point
    --  @param Base_IRI Absolute IRI relative references resolve against, or
    --     empty for none
    --  @param Limits Bounds for this parse
@@ -238,6 +258,9 @@ private
      (Key_Type     => String,
       Element_Type => String);
 
+   package Label_Sets is new Ada.Containers.Indefinite_Ordered_Sets
+     (Element_Type => String);
+
    type Parse_Diagnostic is record
       Code_Value       : Diagnostic_Code := Malformed_Syntax;
       Production_Value : Production_Kind := Document_Production;
@@ -268,6 +291,9 @@ private
       Graph_Is_Blank  : Boolean := False;
       In_Graph_Block  : Boolean := False;
 
+      --  Labels the document wrote itself, so that a generated label
+      --  never collides with one of them.
+      Document_Labels : Label_Sets.Set;
       Blank_Counter   : Natural := 0;
       Quad_Count      : Natural := 0;
       Byte_Count      : Natural := 0;

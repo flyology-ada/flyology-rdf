@@ -309,10 +309,21 @@ begin
    ------------------------------------------------------------------
    --  Blank nodes, collections, property lists
    ------------------------------------------------------------------
+   --  A document's own labels pass through unchanged, so reading back this
+   --  crate's output renames nothing. Rewriting them would rename again on
+   --  every pass, and labels would grow without bound rather than reach a
+   --  fixed point.
    Check_Parse
      (EX & "_:a ex:p _:b .",
-      "_:ua <http://example.org/p> _:ub ." & ASCII.LF,
-      "document blank node labels are namespaced");
+      "_:a <http://example.org/p> _:b ." & ASCII.LF,
+      "document blank node labels pass through unchanged");
+
+   --  A generated label steps over one the document already used.
+   Check_Parse
+     (EX & "_:b1 ex:p [ ex:q ex:r ] .",
+      "_:b2 <http://example.org/q> <http://example.org/r> ." & ASCII.LF &
+      "_:b1 <http://example.org/p> _:b2 ." & ASCII.LF,
+      "a generated label avoids a document label");
 
    Check_Parse
      (EX & "ex:s ex:p [ ex:q ex:r ] .",

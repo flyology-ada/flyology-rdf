@@ -9,6 +9,7 @@ package body Flyology_RDF.Turtle_Parsers is
    use type Lexers.Scan_Error_Kind;
    use type Lexers.Token_Kind;
    use type Lexers.Direction_Value;
+   use type Terms.Term_Kind;
 
    XSD_String  : constant String :=
      "http://www.w3.org/2001/XMLSchema#string";
@@ -170,23 +171,39 @@ package body Flyology_RDF.Turtle_Parsers is
 
       function Fresh_Blank_Label return String;
 
+      --  A label for a construct the document did not name: a collection
+      --  cell, a property list, an anonymous reifier. Any label the
+      --  document has already used is skipped, so the two kinds share one
+      --  namespace without colliding.
       function Fresh_Blank_Label return String is
       begin
-         Into.Blank_Counter := Into.Blank_Counter + 1;
-         declare
-            Image : constant String :=
-              Natural'Image (Into.Blank_Counter);
-         begin
-            return Unbounded.To_String (Into.Blank_Prefix) & "b"
-              & Image (Image'First + 1 .. Image'Last);
-         end;
+         loop
+            Into.Blank_Counter := Into.Blank_Counter + 1;
+            declare
+               Image : constant String :=
+                 Natural'Image (Into.Blank_Counter);
+               Label : constant String :=
+                 "b" & Image (Image'First + 1 .. Image'Last);
+            begin
+               if not Into.Document_Labels.Contains (Label) then
+                  return Unbounded.To_String (Into.Blank_Prefix) & Label;
+               end if;
+            end;
+         end loop;
       end Fresh_Blank_Label;
 
-      --  A label the document wrote itself. Prefixing keeps it from
-      --  colliding with a generated one, and with a label of the same name
-      --  from another document parsed by the same consumer.
-      function Document_Blank_Label (Raw : String) return String
-      is (Unbounded.To_String (Into.Blank_Prefix) & "u" & Raw);
+      --  A label the document wrote itself, carried through unchanged apart
+      --  from the caller's prefix. Rewriting it would make reading back
+      --  this crate's own output rename every node, and rename it again on
+      --  the next pass, so labels would grow without bound instead of
+      --  reaching a fixed point.
+      function Document_Blank_Label (Raw : String) return String is
+      begin
+         if not Into.Document_Labels.Contains (Raw) then
+            Into.Document_Labels.Insert (Raw);
+         end if;
+         return Unbounded.To_String (Into.Blank_Prefix) & Raw;
+      end Document_Blank_Label;
 
       function Resolve (Reference : String; What : Production_Kind)
         return IRIs.IRI;
@@ -793,6 +810,104 @@ package body Flyology_RDF.Turtle_Parsers is
          end case;
       end Parse_Directive;
 
+      --  N-Triples and N-Quads: one statement per line, every IRI absolute,
+      --  no abbreviation of any kind. Only the term positions differ from
+      --  the general grammar, and they differ by being narrower, so this is
+      --  written out rather than expressed as restrictions on the general
+      --  routines -- a narrower grammar sharing a wider implementation is
+      --  how false accepts get in.
+      procedure Parse_Line_Statement;
+
+      procedure Parse_Line_Statement is
+
+         function Absolute (What : Production_Kind) return IRIs.IRI;
+
+         function Absolute (What : Production_Kind) return IRIs.IRI is
+         begin
+            --  No base applies: these grammars require the IRI as written
+            --  to be absolute.
+            if not IRIs.Is_Valid (Lexers.Text (Current)) then
+               Reject (Invalid_IRI, What);
+            end if;
+            return Result : constant IRIs.IRI :=
+              IRIs.From_UTF_8 (Lexers.Text (Current))
+            do
+               Advance;
+            end return;
+         end Absolute;
+
+         function Line_Term
+           (What         : Production_Kind;
+            Allow_Literal : Boolean) return Terms.Term;
+
+         function Line_Term
+           (What          : Production_Kind;
+            Allow_Literal : Boolean) return Terms.Term is
+         begin
+            case Peek_Kind is
+               when Lexers.IRI_Reference_Token =>
+                  return Terms.IRI_Term (Absolute (What));
+               when Lexers.Blank_Label_Token =>
+                  return Result : constant Terms.Term :=
+                    Terms.Blank_Node
+                      (Document_Blank_Label (Lexers.Text (Current)))
+                  do
+                     Advance;
+                  end return;
+               when Lexers.String_Token =>
+                  if not Allow_Literal then
+                     Reject (Malformed_Syntax, What);
+                  end if;
+                  return Parse_Literal;
+               when Lexers.Open_Triple_Term_Token =>
+                  return Parse_Triple_Term;
+               when others =>
+                  Reject (Malformed_Syntax, What);
+                  raise Grammar_Error;
+            end case;
+         end Line_Term;
+
+         Where     : constant Source_Span := Token_Span (Current);
+         Subject   : constant Terms.Term :=
+           Line_Term (Subject_Production, Allow_Literal => False);
+         Predicate : constant IRIs.IRI :=
+           (if Peek_Kind = Lexers.IRI_Reference_Token
+            then Absolute (Predicate_Production)
+            else raise Grammar_Error);
+         Object    : constant Terms.Term :=
+           Line_Term (Object_Production, Allow_Literal => True);
+      begin
+         if Peek_Kind in Lexers.IRI_Reference_Token
+                       | Lexers.Blank_Label_Token
+         then
+            if Into.Syntax_Data /= NQuads_Syntax then
+               Reject (Unsupported_Production, Graph_Block_Production);
+            end if;
+            declare
+               Name : constant Terms.Term :=
+                 Line_Term (Graph_Block_Production, Allow_Literal => False);
+            begin
+               Into.Graph_Is_Named := True;
+               Into.Graph_Is_Blank :=
+                 Terms.Kind (Name) = Terms.Blank_Node_Kind;
+               Into.Current_Graph := Unbounded.To_Unbounded_String
+                 (if Into.Graph_Is_Blank
+                  then Terms.Label (Name)
+                  else IRIs.To_UTF_8 (Terms.IRI_Value (Name)));
+            end;
+         else
+            Into.Graph_Is_Named := False;
+            Into.Graph_Is_Blank := False;
+         end if;
+
+         Emit (Subject, Predicate, Object, Where);
+         Expect (Lexers.Dot_Token, Statement_Production);
+
+         --  A graph label binds to its own statement only.
+         Into.Graph_Is_Named := False;
+         Into.Graph_Is_Blank := False;
+      end Parse_Line_Statement;
+
       procedure Parse_Triples;
 
       procedure Parse_Triples is
@@ -839,6 +954,14 @@ package body Flyology_RDF.Turtle_Parsers is
          Source_Value     => Into.Source_Data);
 
       if Tokens.Is_Empty then
+         return;
+      end if;
+
+      if Is_Line_Based (Into.Syntax_Data) then
+         Parse_Line_Statement;
+         if not At_End then
+            Reject (Malformed_Syntax, Statement_Production);
+         end if;
          return;
       end if;
 
