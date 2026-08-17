@@ -53,10 +53,21 @@ procedure N3_Conformance is
      "http://www.w3.org/2001/sw/DataAccess/tests/test-manifest#";
    RDF_NS : constant String :=
      "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
+   RDFT : constant String :=
+     "http://www.w3.org/ns/rdftest#";
 
    Examined          : Natural := 0;
    Positive_Syntax   : Natural := 0;
    Negative_Syntax   : Natural := 0;
+
+   --  Entries the working group withdrew. They are run and reported like
+   --  any other, and counted apart, because a suite that keeps a
+   --  withdrawn test is not asserting it: grading against one would
+   --  measure agreement with a decision its own authors reversed. The
+   --  status is published in the manifest, so this reads it rather than
+   --  deciding it here.
+   Withdrawn          : Natural := 0;
+   Withdrawn_Diverged : Natural := 0;
    Bytes_Parsed      : Natural := 0;
    Unexpected_Accept : Natural := 0;
    Unexpected_Reject : Natural := 0;
@@ -135,9 +146,10 @@ procedure N3_Conformance is
       return (if Cut = 0 then Value else Value (Cut + 1 .. Value'Last));
    end Local_Name;
 
-   Types   : String_Maps.Map;
-   Actions : String_Maps.Map;
-   Names   : String_Maps.Map;
+   Types    : String_Maps.Map;
+   Actions  : String_Maps.Map;
+   Names    : String_Maps.Map;
+   Approval : String_Maps.Map;
    Subjects : String_Sets.Set;
 
    procedure Index_Manifest (Data : Datasets.Dataset) is
@@ -164,6 +176,8 @@ procedure N3_Conformance is
             Actions.Include (Subject, Key (Object));
          elsif Predicate = MF & "name" then
             Names.Include (Subject, Key (Object));
+         elsif Predicate = RDFT & "approval" then
+            Approval.Include (Subject, Local_Name (Key (Object)));
          end if;
       end Note;
    begin
@@ -213,8 +227,14 @@ procedure N3_Conformance is
             Text      : constant String := Read_File (Path);
             Succeeded : Boolean := True;
             Reason    : Unbounded.Unbounded_String;
+            Retracted : constant Boolean :=
+              Approval.Contains (Subject)
+              and then Approval.Element (Subject) = "Rejected";
          begin
             Examined := Examined + 1;
+            if Retracted then
+               Withdrawn := Withdrawn + 1;
+            end if;
             Bytes_Parsed := Bytes_Parsed + Text'Length;
             if Wants_Accept then
                Positive_Syntax := Positive_Syntax + 1;
@@ -240,18 +260,27 @@ procedure N3_Conformance is
                     (Ada.Exceptions.Exception_Message (Error));
             end;
 
-            if Wants_Accept and then not Succeeded then
-               Unexpected_Reject := Unexpected_Reject + 1;
-               Unbounded.Append
-                 (Divergences,
-                  "    " & Entry_Name & ": " & Unbounded.To_String (Reason)
-                  & ASCII.LF);
-            elsif not Wants_Accept and then Succeeded then
-               Unexpected_Accept := Unexpected_Accept + 1;
-               Unbounded.Append
-                 (Divergences,
-                  "    " & Entry_Name & ": accepted an invalid document"
-                  & ASCII.LF);
+            if Wants_Accept = Succeeded then
+               null;
+            else
+               declare
+                  What : constant String :=
+                    (if Wants_Accept then Unbounded.To_String (Reason)
+                     else "accepted an invalid document");
+               begin
+                  if Retracted then
+                     Withdrawn_Diverged := Withdrawn_Diverged + 1;
+                  elsif Wants_Accept then
+                     Unexpected_Reject := Unexpected_Reject + 1;
+                  else
+                     Unexpected_Accept := Unexpected_Accept + 1;
+                  end if;
+                  Unbounded.Append
+                    (Divergences,
+                     "    " & Entry_Name
+                     & (if Retracted then " [withdrawn]" else "")
+                     & ": " & What & ASCII.LF);
+               end;
             end if;
          end;
       end;
@@ -345,11 +374,13 @@ begin
    IO.Put_Line ("  entries examined    " & Examined'Image);
    IO.Put_Line ("    positive syntax   " & Positive_Syntax'Image);
    IO.Put_Line ("    negative syntax   " & Negative_Syntax'Image);
+   IO.Put_Line ("    of those, withdrawn" & Withdrawn'Image);
    IO.Put_Line ("  bytes parsed        " & Bytes_Parsed'Image);
    IO.Put_Line ("  skipped, reasoning  " & Skipped_Reasoning'Image);
    IO.Put_Line ("  skipped, missing    " & Skipped_Missing'Image);
    IO.Put_Line ("  rejected, valid     " & Unexpected_Reject'Image);
    IO.Put_Line ("  accepted, invalid   " & Unexpected_Accept'Image);
+   IO.Put_Line ("  withdrawn, diverged " & Withdrawn_Diverged'Image);
 
    if Unbounded.Length (Divergences) > 0 then
       IO.Put_Line ("  divergences:");

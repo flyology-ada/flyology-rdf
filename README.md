@@ -80,11 +80,20 @@ not a verdict:
 | Suite | Examined | Rejected valid | Accepted invalid | Wrong result |
 | --- | --- | --- | --- | --- |
 | RDF 1.1 and 1.2 | 1050 | **0** | **0** | **0** |
-| Notation3 syntax | 1193 | 9 | 2 | — |
+| Notation3 syntax | 1070 | **0** | **0** | — |
 | SPARQL 1.1 syntax | 488 | **0** | **0** | — |
 
 Corpora are pinned in `scripts/provision-oracles.sh`; the runs above are
 against those pins.
+
+The N3 suite carries 123 further entries its working group withdrew,
+marked `rdft:approval rdft:Rejected` in the manifest. They are read, run
+and reported like any other entry and counted apart: grading against a
+withdrawn test would measure agreement with a decision its own authors
+reversed. Eleven of them diverge, all cwm-era notation the specification
+did not keep -- `?x^^xsd:dateTime`, `?s@de`, an `id` outside a property
+list. The harness prints each one, marked `[withdrawn]`. No entry in the
+RDF or SPARQL suites carries that status.
 
 What cannot be graded is counted as skipped, not passed: 811 SPARQL
 evaluation entries need a query engine, 83 more are SPARQL Update rather
