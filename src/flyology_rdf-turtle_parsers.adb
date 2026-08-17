@@ -483,7 +483,20 @@ package body Flyology_RDF.Turtle_Parsers is
          end case;
 
          Predicate := Parse_Verb;
-         Object := Parse_Object_Term;
+
+         --  The object of a reified triple is narrower than an object in
+         --  general: a collection or a property list is not admitted here.
+         --  Reaching for the general routine is what lets those through.
+         case Peek_Kind is
+            when Lexers.IRI_Reference_Token | Lexers.Prefixed_Name_Token
+               | Lexers.Blank_Label_Token | Lexers.String_Token
+               | Lexers.Integer_Token | Lexers.Decimal_Token
+               | Lexers.Double_Token | Lexers.Boolean_Token
+               | Lexers.Open_Triple_Term_Token | Lexers.Open_Quoted_Token =>
+               Object := Parse_Object_Term;
+            when others =>
+               Reject (Malformed_Syntax, Object_Production);
+         end case;
 
          if Peek_Kind = Lexers.Reifier_Token then
             Node := Parse_Reifier;
@@ -852,7 +865,7 @@ package body Flyology_RDF.Turtle_Parsers is
          end Absolute;
 
          function Line_Term
-           (What         : Production_Kind;
+           (What          : Production_Kind;
             Allow_Literal : Boolean) return Terms.Term;
 
          function Line_Term
@@ -879,6 +892,12 @@ package body Flyology_RDF.Turtle_Parsers is
                   end if;
                   return Parse_Literal;
                when Lexers.Open_Triple_Term_Token =>
+                  --  A triple term is an object, never a subject or a
+                  --  graph label. Allow_Literal marks the object position,
+                  --  which is the same distinction.
+                  if not Allow_Literal then
+                     Reject (Malformed_Syntax, What);
+                  end if;
                   return Parse_Triple_Term;
                when others =>
                   Reject (Malformed_Syntax, What);
@@ -946,9 +965,18 @@ package body Flyology_RDF.Turtle_Parsers is
             end;
          else
             declare
+               Quoted  : constant Boolean :=
+                 Peek_Kind = Lexers.Open_Quoted_Token;
                Subject : constant Terms.Term := Parse_Subject_Term;
             begin
-               Parse_Predicate_Object_List (Subject);
+               --  A reified triple states something on its own, so it may
+               --  stand as a whole statement with no predicates after it.
+               if not (Quoted
+                       and then Peek_Kind in Lexers.Dot_Token
+                                           | Lexers.Close_Brace_Token)
+               then
+                  Parse_Predicate_Object_List (Subject);
+               end if;
             end;
          end if;
          if Peek_Kind = Lexers.Close_Brace_Token then
