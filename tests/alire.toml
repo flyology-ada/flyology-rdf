@@ -16,6 +16,7 @@ executables = [
   "roundtrip_tests",
   "canonicalization_tests",
   "codec_tests",
+  "conformance",
 ]
 
 [[depends-on]]

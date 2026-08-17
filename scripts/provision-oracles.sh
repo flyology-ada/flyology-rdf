@@ -26,8 +26,11 @@ oxigraph_image=${FLYOLOGY_RDF_OXIGRAPH_IMAGE:-"ghcr.io/oxigraph/oxigraph:${oxigr
 
 ldcli_version=${FLYOLOGY_RDF_LDCLI_VERSION:-1.0.3}
 
+#  w3c/rdf-tests carries the RDF syntax suites and the SPARQL suites
+#  together, so one checkout serves both harnesses.
 rdf_tests_commit=${FLYOLOGY_RDF_TESTS_COMMIT:-}
 rdf_canon_commit=${FLYOLOGY_RDF_CANON_COMMIT:-}
+n3_tests_commit=${FLYOLOGY_N3_TESTS_COMMIT:-}
 
 usage () {
    cat <<'USAGE'
@@ -37,7 +40,7 @@ Usage: provision-oracles.sh [all|jena|oxigraph|ldcli|corpora|verify]
   jena       Apache Jena, for riot -- the primary parser oracle
   oxigraph   oxigraph, for convert -- the secondary parser oracle
   ldcli      ld-cli, for rdfc -- the RDFC-1.0 oracle
-  corpora    the W3C rdf-tests and rdf-canon suites
+  corpora    the W3C rdf-tests (RDF and SPARQL), rdf-canon, and N3 suites
   verify     re-check what is already installed against its pins
 
 Every pin is overridable through the environment variable named beside it
@@ -205,6 +208,25 @@ provision_corpora () {
       https://github.com/w3c/rdf-tests.git "$rdf_tests_commit"
    provision_corpus w3c-rdf-canon \
       https://github.com/w3c/rdf-canon.git "$rdf_canon_commit"
+
+   #  Notation3 is specified outside the RDF suites and carries its own.
+   provision_corpus w3c-n3 \
+      https://github.com/w3c/N3.git "$n3_tests_commit"
+
+   #  The SPARQL harness reads from the rdf-tests checkout rather than a
+   #  second clone; a symlink keeps that visible instead of implied.
+   if [ -d "$corpora/w3c-rdf-tests/sparql" ] \
+      && [ ! -e "$corpora/w3c-sparql-tests" ]; then
+      ln -s w3c-rdf-tests/sparql "$corpora/w3c-sparql-tests"
+      note "sparql suites linked from the rdf-tests checkout"
+   fi
+
+   #  Same for N3, whose suites sit under tests/ in its specification repo.
+   if [ -d "$corpora/w3c-n3/tests" ] \
+      && [ ! -e "$corpora/w3c-n3-tests" ]; then
+      ln -s w3c-n3/tests "$corpora/w3c-n3-tests"
+      note "n3 suites linked from the N3 checkout"
+   fi
 }
 
 verify () {

@@ -73,8 +73,29 @@ unrecorded version is not evidence.
 
 ## Status
 
-Under construction. This section will carry conformance evidence — corpus
-counts and oracle provenance — once the harness produces it, and not before.
+Conformance, measured rather than claimed. Each harness reads the W3C
+manifests with this crate's own Turtle parser and reports what it examined,
+not a verdict:
+
+| Suite | Entries examined | Divergences |
+| --- | --- | --- |
+| RDF 1.1 and 1.2 (Turtle, TriG, N-Triples, N-Quads) | 1050 | 43 |
+| Notation3 syntax | 149 | 7 |
+| SPARQL 1.1 syntax | 571 | 249 |
+
+Evaluation entries are counted as skipped, not passed: 811 SPARQL entries
+need a query engine and 148 N3 entries need a reasoner, and this crate has
+neither. RDF evaluation entries *are* run, and compared by RDFC-1.0
+canonical form rather than by blank node label.
+
+SPARQL is the weak one and the number says so. The parser covers the query
+forms, patterns, expressions and modifiers, but not subqueries, VALUES, or
+the full aggregate grammar, and 212 of its divergences are documents it
+rejects for that reason.
+
+These runs were made against unpinned corpus checkouts. The commits are
+recorded beside them, but no number here should be published until the pins
+are set in `scripts/provision-oracles.sh`.
 
 ## Licence
 

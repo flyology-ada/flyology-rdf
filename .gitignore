@@ -37,3 +37,8 @@ __pycache__/
 /sparql/tests/config/
 /sparql/tests/obj/
 /sparql/tests/bin/
+/tests/data/w3c-rdf-tests/
+/tests/data/w3c-rdf-canon/
+/tests/data/w3c-n3/
+/tests/data/w3c-sparql-tests
+/tests/data/w3c-n3-tests

@@ -5,7 +5,7 @@ licenses = "MIT OR Apache-2.0"
 authors = ["Yurii Rashkovskii"]
 maintainers = ["Yurii Rashkovskii <yrashk@gmail.com>"]
 maintainers-logins = ["yrashk"]
-executables = ["n3_tests"]
+executables = ["n3_tests", "n3_conformance"]
 
 [[depends-on]]
 flyology_n3 = "*"

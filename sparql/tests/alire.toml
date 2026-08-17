@@ -5,7 +5,7 @@ licenses = "MIT OR Apache-2.0"
 authors = ["Yurii Rashkovskii"]
 maintainers = ["Yurii Rashkovskii <yrashk@gmail.com>"]
 maintainers-logins = ["yrashk"]
-executables = ["sparql_tests"]
+executables = ["sparql_tests", "sparql_conformance"]
 
 [[depends-on]]
 flyology_sparql = "*"

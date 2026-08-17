@@ -543,9 +543,9 @@ package body Flyology_RDF.Lexers is
       --  Local names admit dots internally but may not end with one, so the
       --  scan records the last position that was a legal ending and backs
       --  up to it. Without that, "ex:a.b ." would swallow the terminator.
-      procedure Scan_Local_Name;
+      procedure Scan_Local_Name (Blank_Label : Boolean := False);
 
-      procedure Scan_Local_Name is
+      procedure Scan_Local_Name (Blank_Label : Boolean := False) is
          Good_Position : Cursors.Cursor_State := Walk_Position;
          Good_Index    : Positive := Walk_Index;
          Good_Length   : Natural := Unbounded.Length (Buffer);
@@ -630,9 +630,14 @@ package body Flyology_RDF.Lexers is
                   Append_Scalar (Buffer, Escaped);
                   Step (Escaped, Escaped_Length);
                end;
-            elsif Is_PN_Chars (Scalar)
-              or else Scalar = 16#3A#         --  ':' is legal in a local
-              or else (First and then Is_Digit (Scalar))
+            elsif (if First
+                   then --  A name may not open with a hyphen or a
+                        --  combining mark, and a blank node label may not
+                        --  open with a colon either.
+                        (Is_PN_Chars_U (Scalar)
+                         or else Is_Digit (Scalar)
+                         or else (Scalar = 16#3A# and then not Blank_Label))
+                   else Is_PN_Chars (Scalar) or else Scalar = 16#3A#)
             then
                Append_Scalar (Buffer, Scalar);
                Step (Scalar, Length);
@@ -711,7 +716,13 @@ package body Flyology_RDF.Lexers is
                   return;
                end if;
 
-               if Is_Digit (Next) then
+               if Next in 16#65# | 16#45# then
+                  --  A dot with an exponent behind it and no digits
+                  --  between: still one number.
+                  Is_Decimal := True;
+                  Append_Scalar (Buffer, 16#2E#);
+                  Scalar := Next;
+               elsif Is_Digit (Next) then
                   Is_Decimal := True;
                   Append_Scalar (Buffer, 16#2E#);
                   while Inner = Available and then Is_Digit (Next) loop
@@ -1242,7 +1253,7 @@ package body Flyology_RDF.Lexers is
                return;
             end if;
             Step (Scalar, Length);
-            Scan_Local_Name;
+            Scan_Local_Name (Blank_Label => True);
             if Status = Token_Found then
                Result.Kind_Value := Blank_Label_Token;
                Result.Prefix_Value := Unbounded.Null_Unbounded_String;

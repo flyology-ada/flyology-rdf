@@ -1034,6 +1034,56 @@ package body Flyology_RDF.Turtle_Parsers is
             Into.Graph_Is_Named := False;
             Into.Graph_Is_Blank := False;
 
+         when Lexers.IRI_Reference_Token | Lexers.Prefixed_Name_Token
+            | Lexers.Blank_Label_Token =>
+            if Next + 1 <= Tokens.Last_Index
+              and then Lexers.Kind (Tokens (Next + 1))
+                       = Lexers.Open_Brace_Token
+            then
+               --  A labelled graph block, written without the keyword.
+               if Into.Syntax_Data /= TriG_Syntax then
+                  Reject (Unsupported_Production, Graph_Block_Production);
+               end if;
+               declare
+                  Where : constant Source_Span := Token_Span (Current);
+               begin
+                  case Peek_Kind is
+                     when Lexers.IRI_Reference_Token =>
+                        Into.Current_Graph := Unbounded.To_Unbounded_String
+                          (IRIs.To_UTF_8
+                             (Resolve (Lexers.Text (Current),
+                                       Graph_Block_Production)));
+                        Into.Graph_Is_Blank := False;
+                     when Lexers.Prefixed_Name_Token =>
+                        Into.Current_Graph := Unbounded.To_Unbounded_String
+                          (IRIs.To_UTF_8 (Expand (Current)));
+                        Into.Graph_Is_Blank := False;
+                     when others =>
+                        Into.Current_Graph := Unbounded.To_Unbounded_String
+                          (Document_Blank_Label (Lexers.Text (Current)));
+                        Into.Graph_Is_Blank := True;
+                  end case;
+                  Advance;
+                  Into.Graph_Is_Named := True;
+                  Expect (Lexers.Open_Brace_Token, Graph_Block_Production);
+                  Into.In_Graph_Block := True;
+
+                  On_Graph_Declaration
+                    (Target,
+                     (if Into.Graph_Is_Blank
+                      then Quads.Blank_Node_Graph
+                             (Terms.Blank_Node
+                                (Unbounded.To_String (Into.Current_Graph)))
+                      else Quads.IRI_Graph
+                             (IRIs.From_UTF_8
+                                (Unbounded.To_String
+                                   (Into.Current_Graph)))),
+                     Where);
+               end;
+            else
+               Parse_Triples;
+            end if;
+
          when others =>
             Parse_Triples;
       end case;
@@ -1064,6 +1114,21 @@ package body Flyology_RDF.Turtle_Parsers is
    begin
       if Tokens.Is_Empty then
          return False;
+      end if;
+
+      --  TriG names a graph either with the GRAPH keyword or by writing
+      --  the label directly before the brace. The second form has to be
+      --  recognised here or the brace never ends a statement and the dot
+      --  inside the block ends it instead.
+      if Natural (Tokens.Length) >= 2
+        and then Lexers.Kind (Tokens.First_Element)
+                 in Lexers.IRI_Reference_Token
+                  | Lexers.Prefixed_Name_Token
+                  | Lexers.Blank_Label_Token
+        and then Lexers.Kind (Tokens (Tokens.First_Index + 1))
+                 = Lexers.Open_Brace_Token
+      then
+         return True;
       end if;
 
       case Lexers.Kind (Tokens.First_Element) is
