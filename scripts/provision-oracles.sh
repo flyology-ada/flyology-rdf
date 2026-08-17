@@ -28,9 +28,9 @@ ldcli_version=${FLYOLOGY_RDF_LDCLI_VERSION:-1.0.3}
 
 #  w3c/rdf-tests carries the RDF syntax suites and the SPARQL suites
 #  together, so one checkout serves both harnesses.
-rdf_tests_commit=${FLYOLOGY_RDF_TESTS_COMMIT:-}
-rdf_canon_commit=${FLYOLOGY_RDF_CANON_COMMIT:-}
-n3_tests_commit=${FLYOLOGY_N3_TESTS_COMMIT:-}
+rdf_tests_commit=${FLYOLOGY_RDF_TESTS_COMMIT:-12774b0ebb385d17651b396654b19254d0fefbfa}
+rdf_canon_commit=${FLYOLOGY_RDF_CANON_COMMIT:-15619df2fda7a4ca88308733789b6774517f9638}
+n3_tests_commit=${FLYOLOGY_N3_TESTS_COMMIT:-b975fc59ab5d2ad2d28e7206f1c34c716977d2ad}
 
 usage () {
    cat <<'USAGE'

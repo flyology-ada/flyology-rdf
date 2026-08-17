@@ -46,6 +46,12 @@ package Flyology_SPARQL.Syntax is
       Bind_Node,               --  BIND (expression AS ?v)
       Values_Node,             --  VALUES ...
       Subquery_Node,           --  { SELECT ... }
+      Triple_Term_Node,        --  <<( s p o )>>
+      Reified_Node,            --  << s p o ~r >>
+      Dataset_Node,            --  FROM, FROM NAMED
+      Exists_Node,             --  EXISTS, NOT EXISTS
+      Collection_Node,         --  ( a b c ) in a pattern
+      Property_List_Node,      --  [ p o ] in a pattern
 
       --  Expressions
       Or_Node, And_Node,
@@ -159,6 +165,12 @@ package Flyology_SPARQL.Syntax is
    function Order_By (Value : Query) return Node_Reference;
    function Template (Value : Query) return Node_Reference;
    function Describe_Targets (Value : Query) return Node_Reference;
+   function Dataset (Value : Query) return Node_Reference;
+
+   --  Return the VERSION declaration, or an empty string.
+   --  @param Value Query to inspect
+   --  @return The declared version
+   function Version (Value : Query) return String;
 
    --  Return the LIMIT or OFFSET, or -1 when absent.
    --  @param Value Query to inspect
@@ -196,6 +208,8 @@ package Flyology_SPARQL.Syntax is
    procedure Set_Order_By (Into : in out Builder; Value : Node_Reference);
    procedure Set_Template (Into : in out Builder; Value : Node_Reference);
    procedure Set_Describe (Into : in out Builder; Value : Node_Reference);
+   procedure Set_Dataset (Into : in out Builder; Value : Node_Reference);
+   procedure Set_Version (Into : in out Builder; Value : String);
    procedure Set_Duplicates (Into : in out Builder; Value : Duplicates_Kind);
    procedure Set_Selects_All (Into : in out Builder; Value : Boolean);
    procedure Set_Limit (Into : in out Builder; Value : Integer);
@@ -241,6 +255,8 @@ private
       Order_Value      : Node_Reference := No_Node;
       Template_Value   : Node_Reference := No_Node;
       Describe_Value   : Node_Reference := No_Node;
+      Dataset_Value    : Node_Reference := No_Node;
+      Version_Value    : Unbounded.Unbounded_String;
       Duplicates_Value : Duplicates_Kind := All_Solutions;
       Selects_All_Flag : Boolean := False;
       Limit_Value      : Integer := -1;

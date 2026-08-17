@@ -1157,9 +1157,10 @@ package body Flyology_RDF.Lexers is
       case Scalar is
          when 16#3C# =>                       --  '<'
             if Dialect = SPARQL_Dialect then
-               --  An IRI reference and the comparison operators share a
-               --  first character, and only the whole token tells them
-               --  apart, so this one place backtracks.
+               --  An IRI reference, the comparison operators, and the
+               --  RDF 1.2 quoting brackets all share a first character,
+               --  and only the whole token tells them apart, so this one
+               --  place backtracks.
                declare
                   Saved_Position : constant Cursors.Cursor_State :=
                     Walk_Position;
@@ -1179,6 +1180,23 @@ package body Flyology_RDF.Lexers is
                   elsif Next = 16#3D# then
                      Step (Next, Next_Length);
                      Emit (Less_Or_Equal_Token);
+                     return;
+                  elsif Next = 16#3C# then
+                     --  '<<' or '<<(': quoted triple or triple term.
+                     Step (Next, Next_Length);
+                     Peek_Token_End (Walk_Index, Next, Next_Length, Inner);
+                     if Inner = Partial or else Inner = Exhausted then
+                        Incomplete;
+                        return;
+                     elsif Inner = Bad then
+                        Fail (Invalid_Encoding);
+                        return;
+                     elsif Next = 16#28# then
+                        Step (Next, Next_Length);
+                        Emit (Open_Triple_Term_Token);
+                     else
+                        Emit (Open_Quoted_Token);
+                     end if;
                      return;
                   end if;
 
@@ -1403,6 +1421,9 @@ package body Flyology_RDF.Lexers is
                elsif Scalar = 16#3D# then
                   Step (Scalar, Length);
                   Emit (Greater_Or_Equal_Token);
+               elsif Scalar = 16#3E# then
+                  Step (Scalar, Length);
+                  Emit (Close_Quoted_Token);
                else
                   Emit (Greater_Token);
                end if;
@@ -1535,6 +1556,9 @@ package body Flyology_RDF.Lexers is
                elsif Scalar = 16#7C# then
                   Step (Scalar, Length);
                   Emit (Or_Token);
+               elsif Scalar = 16#7D# then
+                  Step (Scalar, Length);
+                  Emit (Close_Annotation_Token);
                else
                   --  A single bar is the alternative operator in property
                   --  paths, which reuses the forward-path token.

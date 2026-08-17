@@ -62,6 +62,12 @@ package body Flyology_SPARQL.Syntax is
    function Describe_Targets (Value : Query) return Node_Reference
    is (Value.Describe_Value);
 
+   function Dataset (Value : Query) return Node_Reference
+   is (Value.Dataset_Value);
+
+   function Version (Value : Query) return String
+   is (Unbounded.To_String (Value.Version_Value));
+
    function Limit (Value : Query) return Integer is (Value.Limit_Value);
 
    function Offset (Value : Query) return Integer is (Value.Offset_Value);
@@ -144,6 +150,16 @@ package body Flyology_SPARQL.Syntax is
    begin
       Into.Draft.Describe_Value := Value;
    end Set_Describe;
+
+   procedure Set_Dataset (Into : in out Builder; Value : Node_Reference) is
+   begin
+      Into.Draft.Dataset_Value := Value;
+   end Set_Dataset;
+
+   procedure Set_Version (Into : in out Builder; Value : String) is
+   begin
+      Into.Draft.Version_Value := Unbounded.To_Unbounded_String (Value);
+   end Set_Version;
 
    procedure Set_Duplicates
      (Into : in out Builder; Value : Duplicates_Kind) is

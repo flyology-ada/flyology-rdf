@@ -122,6 +122,21 @@ package body Flyology_SPARQL.Parsers is
          Detail  : String := "") return Syntax.Node_Reference
       is (Syntax.Add_Node (Tree, Variant, Text, Detail));
 
+      Blank_Counter : Natural := 0;
+
+      --  Collections, property lists and unnamed reifiers each need a node
+      --  the query did not name.
+      function Fresh_Blank return Syntax.Node_Reference is
+      begin
+         Blank_Counter := Blank_Counter + 1;
+         declare
+            Image : constant String := Natural'Image (Blank_Counter);
+         begin
+            return Node (Syntax.Blank_Node,
+                         "g" & Image (Image'First + 1 .. Image'Last));
+         end;
+      end Fresh_Blank;
+
       function Parse_Expression return Syntax.Node_Reference;
       function Parse_Group return Syntax.Node_Reference;
 
@@ -226,6 +241,29 @@ package body Flyology_SPARQL.Parsers is
             end;
          end if;
 
+         if At_Keyword ("EXISTS")
+           or else (At_Keyword ("NOT")
+                    and then Next + 1 <= Tokens.Last_Index
+                    and then Lexers.Kind (Tokens (Next + 1))
+                             = Lexers.Keyword_Token
+                    and then Upper (Lexers.Text (Tokens (Next + 1)))
+                             = "EXISTS")
+         then
+            declare
+               Negated : constant Boolean := At_Keyword ("NOT");
+               Result  : Syntax.Node_Reference;
+            begin
+               Advance;
+               if Negated then
+                  Expect_Keyword ("EXISTS");
+               end if;
+               Result := Node (Syntax.Exists_Node,
+                               (if Negated then "NOT EXISTS" else "EXISTS"));
+               Syntax.Add_Child (Tree, Result, Parse_Group);
+               return Result;
+            end;
+         end if;
+
          --  A keyword here begins a built-in call; anything else is a term
          --  or, if a parenthesis follows an IRI, a function call.
          if Peek = Lexers.Keyword_Token then
@@ -253,6 +291,20 @@ package body Flyology_SPARQL.Parsers is
                         exit when Peek /= Lexers.Comma_Token;
                         Advance;
                      end loop;
+                     if Peek = Lexers.Semicolon_Token then
+                        --  GROUP_CONCAT(?x ; SEPARATOR = ", ")
+                        Advance;
+                        Expect_Keyword ("SEPARATOR");
+                        Expect (Lexers.Equals_Token, "an equals sign");
+                        declare
+                           Separator : constant Syntax.Node_Reference :=
+                             Node (Syntax.Call_Node, "SEPARATOR");
+                        begin
+                           Syntax.Add_Child
+                             (Tree, Separator, Parse_Term);
+                           Syntax.Add_Child (Tree, Result, Separator);
+                        end;
+                     end if;
                   end if;
                   Expect (Lexers.Close_Paren_Token,
                           "a closing parenthesis");
@@ -528,37 +580,244 @@ package body Flyology_SPARQL.Parsers is
          return Left;
       end Parse_Path;
 
+      --  A term in a pattern is not the same as a term in an expression:
+      --  a collection, a property list, or a reified triple names
+      --  something and states triples about it at the same time, so the
+      --  group being built has to be reachable from here.
+      function Parse_Pattern_Term
+        (Into : Syntax.Node_Reference) return Syntax.Node_Reference;
+
+      procedure Parse_Predicate_Objects
+        (Into    : Syntax.Node_Reference;
+         Subject : Syntax.Node_Reference);
+
+      function Parse_Pattern_Term
+        (Into : Syntax.Node_Reference) return Syntax.Node_Reference is
+      begin
+         case Peek is
+            when Lexers.Open_Bracket_Token =>
+               Advance;
+               declare
+                  Subject : constant Syntax.Node_Reference := Fresh_Blank;
+               begin
+                  if Peek /= Lexers.Close_Bracket_Token then
+                     Parse_Predicate_Objects (Into, Subject);
+                  end if;
+                  Expect (Lexers.Close_Bracket_Token, "a closing bracket");
+                  return Subject;
+               end;
+
+            when Lexers.Open_Paren_Token =>
+               --  A collection: rdf:first and rdf:rest all the way down,
+               --  with the empty one being rdf:nil.
+               Advance;
+               declare
+                  Head    : Syntax.Node_Reference :=
+                    Node (Syntax.IRI_Node,
+                          "http://www.w3.org/1999/02/22-rdf-syntax-ns#nil");
+                  Last    : Syntax.Node_Reference := Head;
+                  Started : Boolean := False;
+               begin
+                  while Peek /= Lexers.Close_Paren_Token and then not At_End
+                  loop
+                     declare
+                        Cell    : constant Syntax.Node_Reference :=
+                          Fresh_Blank;
+                        Element : constant Syntax.Node_Reference :=
+                          Parse_Pattern_Term (Into);
+                        First   : constant Syntax.Node_Reference :=
+                          Node (Syntax.Triple_Node);
+                     begin
+                        Syntax.Add_Child (Tree, First, Cell);
+                        Syntax.Add_Child
+                          (Tree, First,
+                           Node (Syntax.IRI_Node,
+                                 "http://www.w3.org/1999/02/22-rdf-syntax"
+                                 & "-ns#first"));
+                        Syntax.Add_Child (Tree, First, Element);
+                        Syntax.Add_Child (Tree, Into, First);
+
+                        if Started then
+                           declare
+                              Rest : constant Syntax.Node_Reference :=
+                                Node (Syntax.Triple_Node);
+                           begin
+                              Syntax.Add_Child (Tree, Rest, Last);
+                              Syntax.Add_Child
+                                (Tree, Rest,
+                                 Node (Syntax.IRI_Node,
+                                       "http://www.w3.org/1999/02/22-rdf"
+                                       & "-syntax-ns#rest"));
+                              Syntax.Add_Child (Tree, Rest, Cell);
+                              Syntax.Add_Child (Tree, Into, Rest);
+                           end;
+                        else
+                           Head := Cell;
+                           Started := True;
+                        end if;
+                        Last := Cell;
+                     end;
+                  end loop;
+                  Expect (Lexers.Close_Paren_Token,
+                          "a closing parenthesis");
+                  if Started then
+                     declare
+                        Rest : constant Syntax.Node_Reference :=
+                          Node (Syntax.Triple_Node);
+                     begin
+                        Syntax.Add_Child (Tree, Rest, Last);
+                        Syntax.Add_Child
+                          (Tree, Rest,
+                           Node (Syntax.IRI_Node,
+                                 "http://www.w3.org/1999/02/22-rdf-syntax"
+                                 & "-ns#rest"));
+                        Syntax.Add_Child
+                          (Tree, Rest,
+                           Node (Syntax.IRI_Node,
+                                 "http://www.w3.org/1999/02/22-rdf-syntax"
+                                 & "-ns#nil"));
+                        Syntax.Add_Child (Tree, Into, Rest);
+                     end;
+                  end if;
+                  return Head;
+               end;
+
+            when Lexers.Open_Triple_Term_Token =>
+               Advance;
+               declare
+                  Result : constant Syntax.Node_Reference :=
+                    Node (Syntax.Triple_Term_Node);
+               begin
+                  Syntax.Add_Child (Tree, Result, Parse_Pattern_Term (Into));
+                  Syntax.Add_Child (Tree, Result, Parse_Path);
+                  Syntax.Add_Child (Tree, Result, Parse_Pattern_Term (Into));
+                  Expect (Lexers.Close_Triple_Term_Token,
+                          "a triple term terminator");
+                  return Result;
+               end;
+
+            when Lexers.Open_Quoted_Token =>
+               --  A reified triple names the reifying node and states the
+               --  triple about it.
+               Advance;
+               declare
+                  Result : constant Syntax.Node_Reference :=
+                    Node (Syntax.Reified_Node);
+               begin
+                  Syntax.Add_Child (Tree, Result, Parse_Pattern_Term (Into));
+                  Syntax.Add_Child (Tree, Result, Parse_Path);
+                  Syntax.Add_Child (Tree, Result, Parse_Pattern_Term (Into));
+                  if Peek = Lexers.Reifier_Token then
+                     Advance;
+                     if Peek in Lexers.IRI_Reference_Token
+                              | Lexers.Prefixed_Name_Token
+                              | Lexers.Blank_Label_Token
+                              | Lexers.Variable_Token
+                     then
+                        Syntax.Add_Child (Tree, Result, Parse_Term);
+                     else
+                        Syntax.Add_Child (Tree, Result, Fresh_Blank);
+                     end if;
+                  end if;
+                  Expect (Lexers.Close_Quoted_Token,
+                          "a quoted triple terminator");
+                  Syntax.Add_Child (Tree, Into, Result);
+                  return Result;
+               end;
+
+            when others =>
+               return Parse_Term;
+         end case;
+      end Parse_Pattern_Term;
+
+      --  A reifier or annotation block attaching to the triple just read.
+      procedure Parse_Annotation
+        (Into   : Syntax.Node_Reference;
+         Triple : Syntax.Node_Reference) is
+      begin
+         while Peek in Lexers.Reifier_Token | Lexers.Open_Annotation_Token
+         loop
+            declare
+               Marker : constant Syntax.Node_Reference :=
+                 Node (Syntax.Reified_Node, "annotation");
+            begin
+               Syntax.Add_Child (Tree, Marker, Triple);
+               if Peek = Lexers.Reifier_Token then
+                  Advance;
+                  if Peek in Lexers.IRI_Reference_Token
+                           | Lexers.Prefixed_Name_Token
+                           | Lexers.Blank_Label_Token
+                           | Lexers.Variable_Token
+                  then
+                     Syntax.Add_Child (Tree, Marker, Parse_Term);
+                  else
+                     Syntax.Add_Child (Tree, Marker, Fresh_Blank);
+                  end if;
+               else
+                  Syntax.Add_Child (Tree, Marker, Fresh_Blank);
+               end if;
+
+               if Peek = Lexers.Open_Annotation_Token then
+                  Advance;
+                  Parse_Predicate_Objects
+                    (Into, Syntax.Child
+                             (Syntax.To_Query (Tree), Marker, 2));
+                  Expect (Lexers.Close_Annotation_Token,
+                          "an annotation terminator");
+               end if;
+               Syntax.Add_Child (Tree, Into, Marker);
+            end;
+         end loop;
+      end Parse_Annotation;
+
+      procedure Parse_Predicate_Objects
+        (Into    : Syntax.Node_Reference;
+         Subject : Syntax.Node_Reference) is
+      begin
+         loop
+            declare
+               Predicate : constant Syntax.Node_Reference := Parse_Path;
+            begin
+               loop
+                  declare
+                     Triple : constant Syntax.Node_Reference :=
+                       Node (Syntax.Triple_Node);
+                  begin
+                     Syntax.Add_Child (Tree, Triple, Subject);
+                     Syntax.Add_Child (Tree, Triple, Predicate);
+                     Syntax.Add_Child
+                       (Tree, Triple, Parse_Pattern_Term (Into));
+                     Syntax.Add_Child (Tree, Into, Triple);
+                     Parse_Annotation (Into, Triple);
+                  end;
+                  exit when Peek /= Lexers.Comma_Token;
+                  Advance;
+               end loop;
+            end;
+            exit when Peek /= Lexers.Semicolon_Token;
+            while Peek = Lexers.Semicolon_Token loop
+               Advance;
+            end loop;
+            exit when At_End
+              or else Peek in Lexers.Dot_Token | Lexers.Close_Brace_Token
+                            | Lexers.Close_Bracket_Token
+                            | Lexers.Close_Annotation_Token;
+         end loop;
+      end Parse_Predicate_Objects;
+
       --  A block of triples sharing subjects and predicates.
       procedure Parse_Triples (Into : Syntax.Node_Reference) is
       begin
          loop
             declare
-               Subject : constant Syntax.Node_Reference := Parse_Term;
+               Subject : constant Syntax.Node_Reference :=
+                 Parse_Pattern_Term (Into);
             begin
-               loop
-                  declare
-                     Predicate : constant Syntax.Node_Reference :=
-                       Parse_Path;
-                  begin
-                     loop
-                        declare
-                           Triple : constant Syntax.Node_Reference :=
-                             Node (Syntax.Triple_Node);
-                        begin
-                           Syntax.Add_Child (Tree, Triple, Subject);
-                           Syntax.Add_Child (Tree, Triple, Predicate);
-                           Syntax.Add_Child (Tree, Triple, Parse_Term);
-                           Syntax.Add_Child (Tree, Into, Triple);
-                        end;
-                        exit when Peek /= Lexers.Comma_Token;
-                        Advance;
-                     end loop;
-                  end;
-                  exit when Peek /= Lexers.Semicolon_Token;
-                  Advance;
-                  exit when Peek in Lexers.Dot_Token
-                                  | Lexers.Close_Brace_Token;
-               end loop;
+               --  A property list or reified triple may stand alone.
+               if Peek not in Lexers.Dot_Token | Lexers.Close_Brace_Token
+               then
+                  Parse_Predicate_Objects (Into, Subject);
+               end if;
             end;
 
             exit when Peek /= Lexers.Dot_Token;
@@ -637,6 +896,162 @@ package body Flyology_SPARQL.Parsers is
                   Syntax.Add_Child (Tree, Result, Item);
                end;
 
+            elsif At_Keyword ("VALUES") then
+               Advance;
+               declare
+                  Item : constant Syntax.Node_Reference :=
+                    Node (Syntax.Values_Node);
+                  Vars : constant Syntax.Node_Reference :=
+                    Node (Syntax.Projection_Node);
+               begin
+                  --  Two spellings: one variable with bare values, or a
+                  --  parenthesised list with parenthesised rows.
+                  if Peek = Lexers.Open_Paren_Token then
+                     Advance;
+                     while Peek = Lexers.Variable_Token loop
+                        Syntax.Add_Child (Tree, Vars, Parse_Term);
+                     end loop;
+                     Expect (Lexers.Close_Paren_Token,
+                             "a closing parenthesis");
+                     Syntax.Add_Child (Tree, Item, Vars);
+                     Expect (Lexers.Open_Brace_Token, "an opening brace");
+                     while Peek = Lexers.Open_Paren_Token loop
+                        Advance;
+                        declare
+                           Row : constant Syntax.Node_Reference :=
+                             Node (Syntax.Projection_Node, "row");
+                        begin
+                           while Peek /= Lexers.Close_Paren_Token
+                             and then not At_End
+                           loop
+                              if At_Keyword ("UNDEF") then
+                                 Advance;
+                                 Syntax.Add_Child
+                                   (Tree, Row,
+                                    Node (Syntax.Call_Node, "UNDEF"));
+                              else
+                                 Syntax.Add_Child (Tree, Row, Parse_Term);
+                              end if;
+                           end loop;
+                           Expect (Lexers.Close_Paren_Token,
+                                   "a closing parenthesis");
+                           Syntax.Add_Child (Tree, Item, Row);
+                        end;
+                     end loop;
+                     Expect (Lexers.Close_Brace_Token, "a closing brace");
+                  else
+                     Syntax.Add_Child (Tree, Vars, Parse_Term);
+                     Syntax.Add_Child (Tree, Item, Vars);
+                     Expect (Lexers.Open_Brace_Token, "an opening brace");
+                     while Peek /= Lexers.Close_Brace_Token
+                       and then not At_End
+                     loop
+                        declare
+                           Row : constant Syntax.Node_Reference :=
+                             Node (Syntax.Projection_Node, "row");
+                        begin
+                           if At_Keyword ("UNDEF") then
+                              Advance;
+                              Syntax.Add_Child
+                                (Tree, Row,
+                                 Node (Syntax.Call_Node, "UNDEF"));
+                           else
+                              Syntax.Add_Child (Tree, Row, Parse_Term);
+                           end if;
+                           Syntax.Add_Child (Tree, Item, Row);
+                        end;
+                     end loop;
+                     Expect (Lexers.Close_Brace_Token, "a closing brace");
+                  end if;
+                  Syntax.Add_Child (Tree, Result, Item);
+               end;
+
+            elsif Peek = Lexers.Open_Brace_Token
+              and then Next + 1 <= Tokens.Last_Index
+              and then Lexers.Kind (Tokens (Next + 1)) = Lexers.Keyword_Token
+              and then Upper (Lexers.Text (Tokens (Next + 1))) = "SELECT"
+            then
+               --  A subquery: a whole SELECT nested inside a pattern.
+               Advance;
+               declare
+                  Item : constant Syntax.Node_Reference :=
+                    Node (Syntax.Subquery_Node);
+                  Items : constant Syntax.Node_Reference :=
+                    Node (Syntax.Projection_Node);
+               begin
+                  Advance;
+                  if Take_Keyword ("DISTINCT") then
+                     Syntax.Add_Child
+                       (Tree, Item, Node (Syntax.Call_Node, "DISTINCT"));
+                  elsif Take_Keyword ("REDUCED") then
+                     Syntax.Add_Child
+                       (Tree, Item, Node (Syntax.Call_Node, "REDUCED"));
+                  end if;
+
+                  if Peek = Lexers.Star_Token then
+                     Advance;
+                     Syntax.Add_Child
+                       (Tree, Items, Node (Syntax.Variable_Node, "*"));
+                  else
+                     loop
+                        if Peek = Lexers.Open_Paren_Token then
+                           Advance;
+                           declare
+                              Bound : constant Syntax.Node_Reference :=
+                                Node (Syntax.Projection_Node, "AS");
+                              Value : constant Syntax.Node_Reference :=
+                                Parse_Expression;
+                           begin
+                              Expect_Keyword ("AS");
+                              Syntax.Add_Child (Tree, Bound, Value);
+                              Syntax.Add_Child (Tree, Bound, Parse_Term);
+                              Expect (Lexers.Close_Paren_Token,
+                                      "a closing parenthesis");
+                              Syntax.Add_Child (Tree, Items, Bound);
+                           end;
+                        else
+                           Syntax.Add_Child (Tree, Items, Parse_Term);
+                        end if;
+                        exit when Peek /= Lexers.Variable_Token
+                          and then Peek /= Lexers.Open_Paren_Token;
+                     end loop;
+                  end if;
+                  Syntax.Add_Child (Tree, Item, Items);
+
+                  if Take_Keyword ("WHERE") then
+                     null;
+                  end if;
+                  Syntax.Add_Child (Tree, Item, Parse_Group);
+
+                  --  Trailing modifiers belong to the subquery.
+                  while At_Keyword ("GROUP") or else At_Keyword ("HAVING")
+                    or else At_Keyword ("ORDER") or else At_Keyword ("LIMIT")
+                    or else At_Keyword ("OFFSET")
+                  loop
+                     declare
+                        Word : constant String :=
+                          Upper (Lexers.Text (Current));
+                        Modifier : constant Syntax.Node_Reference :=
+                          Node (Syntax.Call_Node, Word);
+                     begin
+                        Advance;
+                        if Word in "GROUP" | "ORDER" then
+                           Expect_Keyword ("BY");
+                        end if;
+                        if Word in "LIMIT" | "OFFSET" then
+                           Syntax.Add_Child (Tree, Modifier, Parse_Term);
+                        else
+                           Syntax.Add_Child
+                             (Tree, Modifier, Parse_Expression);
+                        end if;
+                        Syntax.Add_Child (Tree, Item, Modifier);
+                     end;
+                  end loop;
+
+                  Expect (Lexers.Close_Brace_Token, "a closing brace");
+                  Syntax.Add_Child (Tree, Result, Item);
+               end;
+
             elsif Peek = Lexers.Open_Brace_Token then
                declare
                   Left : Syntax.Node_Reference := Parse_Group;
@@ -680,6 +1095,15 @@ package body Flyology_SPARQL.Parsers is
                end if;
                Syntax.Set_Base (Tree, Lexers.Text (Current));
                Advance;
+            elsif Peek = Lexers.Version_Directive_Token
+              or else At_Keyword ("VERSION")
+            then
+               Advance;
+               if Peek /= Lexers.String_Token then
+                  Fail ("expected a version string");
+               end if;
+               Syntax.Set_Version (Tree, Lexers.Text (Current));
+               Advance;
             elsif At_Keyword ("PREFIX") then
                Advance;
                if Peek /= Lexers.Prefixed_Name_Token
@@ -702,6 +1126,30 @@ package body Flyology_SPARQL.Parsers is
             end if;
          end loop;
       end Parse_Prologue;
+
+      --  FROM and FROM NAMED, which name the dataset a query runs over.
+      procedure Parse_Dataset is
+         Items : constant Syntax.Node_Reference :=
+           Node (Syntax.Dataset_Node);
+         Any   : Boolean := False;
+      begin
+         while At_Keyword ("FROM") loop
+            Advance;
+            declare
+               Named : constant Boolean := Take_Keyword ("NAMED");
+               Item  : constant Syntax.Node_Reference :=
+                 Node (Syntax.Dataset_Node,
+                       (if Named then "FROM NAMED" else "FROM"));
+            begin
+               Syntax.Add_Child (Tree, Item, Parse_Term);
+               Syntax.Add_Child (Tree, Items, Item);
+               Any := True;
+            end;
+         end loop;
+         if Any then
+            Syntax.Set_Dataset (Tree, Items);
+         end if;
+      end Parse_Dataset;
 
       procedure Parse_Modifiers is
       begin
@@ -836,6 +1284,7 @@ package body Flyology_SPARQL.Parsers is
             Syntax.Set_Projection (Tree, Items);
          end if;
 
+         Parse_Dataset;
          if Take_Keyword ("WHERE") then
             null;
          end if;
@@ -856,6 +1305,7 @@ package body Flyology_SPARQL.Parsers is
 
       elsif Take_Keyword ("ASK") then
          Syntax.Start (Tree, Syntax.Ask_Query);
+         Parse_Dataset;
          if Take_Keyword ("WHERE") then
             null;
          end if;

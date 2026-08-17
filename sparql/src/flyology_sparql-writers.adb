@@ -5,6 +5,8 @@ package body Flyology_SPARQL.Writers is
    package Unbounded renames Ada.Strings.Unbounded;
 
    use type Syntax.Node_Kind;
+
+   Quote : constant Character := Character'Val (34);
    use type Syntax.Node_Reference;
 
    function To_SPARQL (Value : Syntax.Query) return String is
@@ -130,6 +132,35 @@ package body Flyology_SPARQL.Writers is
                return Syntax.Text (Value, Node) & "("
                  & Render (Syntax.Child (Value, Node, 1)) & ")";
 
+            when Syntax.Triple_Term_Node =>
+               return "<<( " & Render (Syntax.Child (Value, Node, 1)) & " "
+                 & Render (Syntax.Child (Value, Node, 2)) & " "
+                 & Render (Syntax.Child (Value, Node, 3)) & " )>>";
+
+            when Syntax.Reified_Node =>
+               --  An annotation marker renders as its reifier; the triple
+               --  it annotates was already written on its own line.
+               if Syntax.Text (Value, Node) = "annotation" then
+                  return Render (Syntax.Child (Value, Node, 2));
+               end if;
+               return "<< " & Render (Syntax.Child (Value, Node, 1)) & " "
+                 & Render (Syntax.Child (Value, Node, 2)) & " "
+                 & Render (Syntax.Child (Value, Node, 3))
+                 & (if Syntax.Child_Count (Value, Node) > 3
+                    then " ~" & Render (Syntax.Child (Value, Node, 4))
+                    else "")
+                 & " >>";
+
+            when Syntax.Dataset_Node =>
+               if Syntax.Text (Value, Node) = "" then
+                  return Children_Of (Node, " ");
+               end if;
+               return Syntax.Text (Value, Node) & " "
+                 & Render (Syntax.Child (Value, Node, 1));
+
+            when Syntax.Exists_Node =>
+               return Syntax.Text (Value, Node) & " { }";
+
             when Syntax.Projection_Node =>
                if Syntax.Text (Value, Node) = "AS" then
                   return "(" & Render (Syntax.Child (Value, Node, 1))
@@ -198,6 +229,58 @@ package body Flyology_SPARQL.Writers is
                Put (Indent (Depth) & "FILTER "
                     & Render (Syntax.Child (Value, Node, 1)) & (1 => ASCII.LF));
 
+            when Syntax.Reified_Node =>
+               Put (Indent (Depth) & Render (Node) & " ." & (1 => ASCII.LF));
+
+            when Syntax.Values_Node =>
+               Put (Indent (Depth) & "VALUES ("
+                    & Render (Syntax.Child (Value, Node, 1)) & ") {"
+                    & (1 => ASCII.LF));
+               for Index in 2 .. Syntax.Child_Count (Value, Node) loop
+                  Put (Indent (Depth + 1) & "("
+                       & Render (Syntax.Child (Value, Node, Index)) & ")"
+                       & (1 => ASCII.LF));
+               end loop;
+               Put (Indent (Depth) & "}" & (1 => ASCII.LF));
+
+            when Syntax.Triple_Term_Node =>
+               Put (Indent (Depth) & Render (Node) & " ." & (1 => ASCII.LF));
+
+            when Syntax.Subquery_Node =>
+               Put (Indent (Depth) & "{" & (1 => ASCII.LF));
+               Put (Indent (Depth + 1) & "SELECT");
+               for Index in 1 .. Syntax.Child_Count (Value, Node) loop
+                  declare
+                     Item : constant Syntax.Node_Reference :=
+                       Syntax.Child (Value, Node, Index);
+                  begin
+                     case Syntax.Kind (Value, Item) is
+                        when Syntax.Projection_Node =>
+                           Put (" " & Render (Item));
+                        when Syntax.Group_Node =>
+                           Put ((1 => ASCII.LF) & Indent (Depth + 1)
+                                & "WHERE ");
+                           Write_Group (Item, Depth + 1);
+                           Put ((1 => ASCII.LF));
+                        when Syntax.Call_Node =>
+                           if Syntax.Child_Count (Value, Item) = 0 then
+                              Put (" " & Syntax.Text (Value, Item));
+                           else
+                              Put (Indent (Depth + 1)
+                                   & Syntax.Text (Value, Item)
+                                   & (if Syntax.Text (Value, Item)
+                                           in "GROUP" | "ORDER"
+                                      then " BY " else " ")
+                                   & Render (Syntax.Child (Value, Item, 1))
+                                   & (1 => ASCII.LF));
+                           end if;
+                        when others =>
+                           null;
+                     end case;
+                  end;
+               end loop;
+               Put (Indent (Depth) & "}" & (1 => ASCII.LF));
+
             when Syntax.Bind_Node =>
                Put (Indent (Depth) & "BIND ("
                     & Render (Syntax.Child (Value, Node, 1)) & " AS "
@@ -210,6 +293,10 @@ package body Flyology_SPARQL.Writers is
       end Write_Pattern;
 
    begin
+      if Syntax.Version (Value) /= "" then
+         Put ("VERSION " & Quote & Syntax.Version (Value)
+              & Quote & (1 => ASCII.LF));
+      end if;
       if Syntax.Base (Value) /= "" then
          Put ("BASE <" & Syntax.Base (Value) & ">" & (1 => ASCII.LF));
       end if;
@@ -253,6 +340,10 @@ package body Flyology_SPARQL.Writers is
                Put ("WHERE ");
             end if;
       end case;
+
+      if Syntax.Dataset (Value) /= Syntax.No_Node then
+         Put (Render (Syntax.Dataset (Value)) & (1 => ASCII.LF));
+      end if;
 
       if Syntax.Where_Clause (Value) /= Syntax.No_Node then
          Write_Group (Syntax.Where_Clause (Value), 0);
