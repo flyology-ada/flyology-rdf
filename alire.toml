@@ -10,7 +10,7 @@ project-files = ["flyology_rdf.gpr"]
 tags = ["ada", "rdf", "turtle", "trig", "parser"]
 
 [[depends-on]]
-flyology_iri = "*"
+flyology_iri = ">=0.1.1-dev & <0.2.0"
 
 [build-switches]
 "*".ada_version = "Ada2022"
