@@ -11,6 +11,7 @@ executables = [
   "statement_tests",
   "cursor_tests",
   "lexer_tests",
+  "parser_tests",
 ]
 
 [[depends-on]]

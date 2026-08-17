@@ -1,0 +1,281 @@
+private with Ada.Containers.Indefinite_Vectors;
+private with Ada.Containers.Indefinite_Ordered_Maps;
+private with Ada.Strings.Unbounded;
+private with Flyology_RDF.Lexers;
+
+with Flyology_RDF.Parser_Cursors;
+with Flyology_RDF.Quads;
+
+--  Chunk-fed RDF 1.2 Turtle and TriG parser.
+--
+--  Input may be split at any byte boundary, including inside a multi-byte
+--  scalar, an escape, or a long string, and produces the same event stream
+--  regardless of how it was split.
+--
+--  Events are emitted as soon as a statement completes. A consumer that
+--  needs a document to be admitted atomically holds them until Finish
+--  reports success; one that is streaming into a store can act immediately.
+package Flyology_RDF.Turtle_Parsers is
+
+   --  Which document grammar to accept.
+   --  @enum Turtle_Syntax Reject graph blocks and the GRAPH keyword
+   --  @enum TriG_Syntax Accept Turtle statements and TriG graph blocks
+   type Syntax_Kind is (Turtle_Syntax, TriG_Syntax);
+
+   --  Bounds a caller imposes on one parse.
+   --  @field Maximum_Bytes Total input accepted
+   --  @field Maximum_Quads Statements emitted, zero for no limit
+   --  @field Maximum_Nesting Depth of collections, property lists, quoted
+   --     triples, and annotations combined
+   --  @field Maximum_Token_Bytes Longest single token
+   --  @field Maximum_Prefixes Distinct prefixes bound by directives
+   type Parse_Limits is record
+      Maximum_Bytes       : Positive := 64 * 1_024 * 1_024;
+      Maximum_Quads       : Natural  := 0;
+      Maximum_Nesting     : Positive := 128;
+      Maximum_Token_Bytes : Positive := 1_048_576;
+      Maximum_Prefixes    : Natural  := 4_096;
+   end record;
+
+   --  A region of the input, given at both ends so that a caller can
+   --  underline it without rescanning.
+   type Source_Span is record
+      Start_Byte   : Natural  := 0;
+      End_Byte     : Natural  := 0;
+      Start_Line   : Positive := 1;
+      Start_Column : Positive := 1;
+      End_Line     : Positive := 1;
+      End_Column   : Positive := 1;
+   end record;
+
+   --  Why a parse failed.
+   --  @enum Malformed_Syntax Input is outside the accepted grammar
+   --  @enum Invalid_Encoding Input is not canonical UTF-8
+   --  @enum Invalid_IRI A resolved IRI is not a valid absolute IRI
+   --  @enum Undefined_Prefix A prefixed name used an unbound prefix
+   --  @enum Byte_Limit Maximum_Bytes exceeded
+   --  @enum Quad_Limit Maximum_Quads exceeded
+   --  @enum Nesting_Limit Maximum_Nesting exceeded
+   --  @enum Token_Limit Maximum_Token_Bytes exceeded
+   --  @enum Prefix_Limit Maximum_Prefixes exceeded
+   --  @enum Unsupported_Production A production this grammar rejects
+   type Diagnostic_Code is
+     (Malformed_Syntax,
+      Invalid_Encoding,
+      Invalid_IRI,
+      Undefined_Prefix,
+      Byte_Limit,
+      Quad_Limit,
+      Nesting_Limit,
+      Token_Limit,
+      Prefix_Limit,
+      Unsupported_Production);
+
+   --  Which part of the grammar was being read.
+   type Production_Kind is
+     (Document_Production,
+      Directive_Production,
+      Graph_Block_Production,
+      Statement_Production,
+      Subject_Production,
+      Predicate_Production,
+      Object_Production,
+      IRI_Production,
+      Blank_Label_Production,
+      Literal_Production,
+      Collection_Production,
+      Triple_Term_Production,
+      Annotation_Production);
+
+   --  A typed parse failure.
+   type Parse_Diagnostic is private;
+
+   --  Return the failure category.
+   --  @param Value Diagnostic to inspect
+   --  @return The diagnostic code
+   function Code (Value : Parse_Diagnostic) return Diagnostic_Code;
+
+   --  Return the production that failed.
+   --  @param Value Diagnostic to inspect
+   --  @return The production kind
+   function Production (Value : Parse_Diagnostic) return Production_Kind;
+
+   --  Return the region of input responsible.
+   --  @param Value Diagnostic to inspect
+   --  @return The source span
+   function Span (Value : Parse_Diagnostic) return Source_Span;
+
+   --  Return the source name supplied at Create.
+   --  @param Value Diagnostic to inspect
+   --  @return The source name
+   function Source_Name (Value : Parse_Diagnostic) return String;
+
+   --  Receives parse events.
+   type Event_Sink is limited interface;
+
+   --  Called when a graph block or GRAPH declaration names a graph.
+   --  @param Target The sink
+   --  @param Graph The graph being entered
+   --  @param Span Region naming the graph
+   procedure On_Graph_Declaration
+     (Target : in out Event_Sink;
+      Graph  : Quads.Graph_Name;
+      Span   : Source_Span) is abstract;
+
+   --  Called once per statement.
+   --  @param Target The sink
+   --  @param Value The statement
+   --  @param Span Region that produced it
+   procedure On_Quad
+     (Target : in out Event_Sink;
+      Value  : Quads.Quad;
+      Span   : Source_Span) is abstract;
+
+   --  Called once, when the parse fails.
+   --  @param Target The sink
+   --  @param Value The diagnostic
+   procedure On_Diagnostic
+     (Target : in out Event_Sink;
+      Value  : Parse_Diagnostic) is abstract;
+
+   --  Outcome of a completed parse.
+   type Parse_Status is (Parse_Succeeded, Parse_Failed);
+
+   --  Raised when a parser is used after it has finished or failed.
+   Parser_State_Error : exception;
+
+   --  Raised when Create is given a base IRI that is not absolute.
+   Invalid_Configuration : exception;
+
+   --  A parse in progress.
+   type Parser (<>) is limited private;
+
+   --  Optional cooperative-yield callback, invoked periodically while
+   --  scanning. It exists so that a lightweight-task runtime can interleave,
+   --  and is deliberately typed as a plain access-to-procedure so that this
+   --  crate depends on no runtime at all.
+   type Work_Checkpoint_Access is access procedure;
+
+   --  Scan units between checkpoint callbacks.
+   Work_Checkpoint_Interval : constant Positive := 4_096;
+
+   --  Begin a parse.
+   --  @param Source_Name Name reported in diagnostics
+   --  @param Blank_Node_Prefix Prepended to every blank node label the
+   --     document introduces, so that labels from two documents parsed by
+   --     the same consumer cannot collide
+   --  @param Base_IRI Absolute IRI relative references resolve against, or
+   --     empty for none
+   --  @param Limits Bounds for this parse
+   --  @param Syntax Grammar to accept
+   --  @param Work_Checkpoint Optional cooperative-yield callback
+   --  @return A parser ready to be fed
+   --  @exception Invalid_Configuration Base_IRI is neither empty nor an
+   --     absolute IRI
+   function Create
+     (Source_Name       : String;
+      Blank_Node_Prefix : String := "";
+      Base_IRI          : String := "";
+      Limits            : Parse_Limits := (others => <>);
+      Syntax            : Syntax_Kind := TriG_Syntax;
+      Work_Checkpoint   : Work_Checkpoint_Access := null) return Parser;
+
+   --  Supply the next bytes of input, emitting every event they complete.
+   --
+   --  If a sink callback raises, the exception propagates unchanged and the
+   --  parser is poisoned: no later Feed emits anything, and Finish reports
+   --  failure.
+   --  @param Into Parser to feed
+   --  @param Bytes Next chunk, which may split any token
+   --  @param Target Sink receiving events
+   --  @exception Parser_State_Error Into has already finished
+   procedure Feed
+     (Into   : in out Parser;
+      Bytes  : String;
+      Target : in out Event_Sink'Class);
+
+   --  Complete the parse, emitting any final events.
+   --  @param Into Parser to finish
+   --  @param Target Sink receiving events
+   --  @return Whether the document was accepted
+   --  @exception Parser_State_Error Into has already finished
+   function Finish
+     (Into   : in out Parser;
+      Target : in out Event_Sink'Class) return Parse_Status;
+
+   --  Deterministic account of scanning work, for tests that need to pin
+   --  behaviour rather than timing.
+   --  @field Bytes_Scanned Input bytes examined
+   --  @field Tokens_Scanned Tokens produced
+   --  @field Statements_Parsed Statements completed
+   --  @field Checkpoint_Calls Cooperative callbacks invoked
+   --  @field Maximum_Pending_Bytes Largest retained partial token
+   --  @field Maximum_Pending_Tokens Largest retained statement, in tokens
+   type Work_Statistics is record
+      Bytes_Scanned          : Natural := 0;
+      Tokens_Scanned         : Natural := 0;
+      Statements_Parsed      : Natural := 0;
+      Checkpoint_Calls       : Natural := 0;
+      Maximum_Pending_Bytes  : Natural := 0;
+      Maximum_Pending_Tokens : Natural := 0;
+   end record;
+
+   --  Report the work this parser has done.
+   --  @param Value Parser to inspect
+   --  @return The accumulated statistics
+   function Work (Value : Parser) return Work_Statistics;
+
+private
+
+   package Unbounded renames Ada.Strings.Unbounded;
+
+   package Token_Vectors is new Ada.Containers.Indefinite_Vectors
+     (Index_Type   => Positive,
+      Element_Type => Lexers.Token,
+      "="          => Lexers."=");
+
+   package Prefix_Maps is new Ada.Containers.Indefinite_Ordered_Maps
+     (Key_Type     => String,
+      Element_Type => String);
+
+   type Parse_Diagnostic is record
+      Code_Value       : Diagnostic_Code := Malformed_Syntax;
+      Production_Value : Production_Kind := Document_Production;
+      Span_Value       : Source_Span;
+      Source_Value     : Unbounded.Unbounded_String;
+   end record;
+
+   type Parser (Initialized : Boolean) is limited record
+      Source_Data     : Unbounded.Unbounded_String;
+      Blank_Prefix    : Unbounded.Unbounded_String;
+      Base_Data       : Unbounded.Unbounded_String;
+      Limits_Data     : Parse_Limits;
+      Syntax_Data     : Syntax_Kind := TriG_Syntax;
+      Checkpoint      : Work_Checkpoint_Access;
+
+      --  Bytes retained because they are a partial token.
+      Pending         : Unbounded.Unbounded_String;
+      Pending_Origin  : Parser_Cursors.Cursor_State :=
+        Parser_Cursors.Initial_State;
+
+      --  Tokens retained because they are a partial statement.
+      Statement       : Token_Vectors.Vector;
+      Nesting         : Natural := 0;
+
+      Prefixes        : Prefix_Maps.Map;
+      Current_Graph   : Unbounded.Unbounded_String;
+      Graph_Is_Named  : Boolean := False;
+      Graph_Is_Blank  : Boolean := False;
+      In_Graph_Block  : Boolean := False;
+
+      Blank_Counter   : Natural := 0;
+      Quad_Count      : Natural := 0;
+      Byte_Count      : Natural := 0;
+      Work_Data       : Work_Statistics;
+      Work_Units      : Natural := 0;
+
+      Failed          : Boolean := False;
+      Finished        : Boolean := False;
+   end record;
+
+end Flyology_RDF.Turtle_Parsers;

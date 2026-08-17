@@ -175,6 +175,13 @@ package Flyology_RDF.Lexers is
    --  @return A Dot_Token at the initial position
    function Null_Token return Token;
 
+   --  Compare two tokens by class and content, ignoring where they were
+   --  found. Two occurrences of the same name in a document are equal.
+   --  @param Left First token
+   --  @param Right Second token
+   --  @return True when the tokens denote the same lexeme
+   overriding function "=" (Left, Right : Token) return Boolean;
+
 private
 
    package Unbounded renames Ada.Strings.Unbounded;

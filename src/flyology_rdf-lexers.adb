@@ -176,6 +176,18 @@ package body Flyology_RDF.Lexers is
    function Null_Token return Token
    is (Initialized => True, others => <>);
 
+   overriding function "=" (Left, Right : Token) return Boolean is
+      use type Unbounded.Unbounded_String;
+   begin
+      return Left.Kind_Value = Right.Kind_Value
+        and then Left.Text_Value = Right.Text_Value
+        and then Left.Prefix_Value = Right.Prefix_Value
+        and then Left.Form_Value = Right.Form_Value
+        and then Left.Has_Direction_Data = Right.Has_Direction_Data
+        and then (not Left.Has_Direction_Data
+                  or else Left.Direction_Data = Right.Direction_Data);
+   end "=";
+
    ----------------------------------------------------------------------
    --  Scanning
    ----------------------------------------------------------------------
@@ -1055,26 +1067,42 @@ package body Flyology_RDF.Lexers is
          if Is_Whitespace (Scalar) then
             Step (Scalar, Length);
          elsif Scalar = 16#23# then           --  '#'
-            loop
-               Step (Scalar, Length);
-               Peek (Text, Walk_Index, Scalar, Length, Look);
-               exit when Look /= Available
-                 or else Cursors.Is_Line_Break (Scalar);
-            end loop;
-            if Look = Bad then
-               Position := Walk_Position;
-               Index := Walk_Index;
-               Fail (Invalid_Encoding);
-               return;
-            elsif Look /= Available then
-               --  A comment running to the end of the buffer may continue
-               --  in the next chunk, but nothing before it is needed again.
-               Position := Walk_Position;
-               Index := Walk_Index;
-               Status := (if Look = Exhausted
-                          then End_Of_Input else Needs_More_Input);
-               return;
-            end if;
+            declare
+               Comment_Position : constant Cursors.Cursor_State :=
+                 Walk_Position;
+               Comment_Index    : constant Positive := Walk_Index;
+            begin
+               loop
+                  Step (Scalar, Length);
+                  Peek (Text, Walk_Index, Scalar, Length, Look);
+                  exit when Look /= Available
+                    or else Cursors.Is_Line_Break (Scalar);
+               end loop;
+
+               if Look = Bad then
+                  Position := Walk_Position;
+                  Index := Walk_Index;
+                  Fail (Invalid_Encoding);
+                  return;
+               elsif Look /= Available then
+                  if Last_Chunk then
+                     --  The comment ends with the document.
+                     Position := Walk_Position;
+                     Index := Walk_Index;
+                     Status := End_Of_Input;
+                  else
+                     --  The rest of the comment is in the next chunk. Give
+                     --  back the part already consumed: keeping it would
+                     --  leave the remainder to be scanned as code, which
+                     --  turns a comment split across a chunk boundary into
+                     --  a syntax error or, worse, into statements.
+                     Position := Comment_Position;
+                     Index := Comment_Index;
+                     Status := Needs_More_Input;
+                  end if;
+                  return;
+               end if;
+            end;
          else
             exit;
          end if;
