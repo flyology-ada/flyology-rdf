@@ -3,6 +3,8 @@ with Ada.Containers.Indefinite_Ordered_Maps;
 with Ada.Containers.Indefinite_Ordered_Sets;
 
 with Flyology_RDF.IRIs;
+with Flyology_RDF.Lexers;
+with Flyology_RDF.Parser_Cursors;
 with Flyology_RDF.Terms;
 
 package body Flyology_N3.Parsers is
@@ -13,7 +15,6 @@ package body Flyology_N3.Parsers is
    package Cursors renames Flyology_RDF.Parser_Cursors;
    package Terms renames Flyology_RDF.Terms;
 
-   use type Lexers.Scan_Status;
    use type Lexers.Token_Kind;
    use type Lexers.Direction_Value;
 
@@ -43,11 +44,11 @@ package body Flyology_N3.Parsers is
      "http://www.w3.org/2001/XMLSchema#boolean";
 
    function Parse_Tokens
-     (Tokens   : Token_Vectors.Vector;
+     (Tokens   : Scanners.Token_Vectors.Vector;
       Base_IRI : String) return Model.Term;
 
    function Parse_Tokens
-     (Tokens   : Token_Vectors.Vector;
+     (Tokens   : Scanners.Token_Vectors.Vector;
       Base_IRI : String) return Model.Term
    is
       Next   : Positive := 1;
@@ -709,70 +710,51 @@ package body Flyology_N3.Parsers is
    --  Scanning
    ---------------------------------------------------------------------
 
-   --  Scan as far as the bytes allow, appending whole tokens and reporting
-   --  where the unread remainder begins. Ended says whether more bytes can
-   --  still arrive: it is the difference between "this token is not
-   --  finished yet" and "this token was never finished".
-   procedure Scan_Chunk
-     (Text     : String;
-      Ended    : Boolean;
-      Origin   : in out Cursors.Cursor_State;
-      Consumed : out Natural;
-      Tokens   : in out Token_Vectors.Vector)
+
+   --  Report a bound the scanner reached, in this crate's own words.
+   procedure Report
+     (Outcome : Scanners.Scan_Outcome;
+      Stopped : Cursors.Cursor_State;
+      Error   : Lexers.Scan_Error_Kind)
    is
-      Position : Cursors.Cursor_State := Origin;
-      Index    : Positive := Text'First;
-      Result   : Lexers.Token := Lexers.Null_Token;
-      Status   : Lexers.Scan_Status;
-      Error    : Lexers.Scan_Error_Kind;
-
-      Consumed_Index    : Natural := Text'First;
-      Consumed_Position : Cursors.Cursor_State := Origin;
+      Where : constant String :=
+        " at line" & Stopped.Line'Image & ", column" & Stopped.Column'Image;
    begin
-      loop
-         Lexers.Scan
-           (Text, Position, Index, Ended, Result, Status, Error,
-            Lexers.N3_Dialect);
-         case Status is
-            when Lexers.Token_Found =>
-               Tokens.Append (Result);
-               Consumed_Index := Index;
-               Consumed_Position := Position;
-
-            when Lexers.Needs_More_Input =>
-               if Ended then
-                  raise Parse_Error with
-                    "input ended inside a token at line"
-                    & Position.Line'Image & ", column"
-                    & Position.Column'Image;
-               end if;
-               exit;
-
-            when Lexers.End_Of_Input =>
-               Consumed_Index := Index;
-               Consumed_Position := Position;
-               exit;
-
-            when Lexers.Scan_Error =>
-               raise Parse_Error with
-                 "malformed token (" & Error'Image & ") at line"
-                 & Position.Line'Image & ", column"
-                 & Position.Column'Image;
-         end case;
-      end loop;
-      Origin := Consumed_Position;
-      Consumed := Consumed_Index;
-   end Scan_Chunk;
+      case Outcome is
+         when Scanners.Scanned => null;
+         when Scanners.Malformed =>
+            raise Parse_Error with
+              "malformed token (" & Error'Image & ")" & Where;
+         when Scanners.Byte_Limit =>
+            raise Parse_Error with "the document is too long" & Where;
+         when Scanners.Token_Limit =>
+            raise Parse_Error with "the document holds too many tokens"
+              & Where;
+         when Scanners.Token_Bytes_Limit =>
+            raise Parse_Error with "a token is too long" & Where;
+      end case;
+   end Report;
 
    function Parse
      (Document : String;
-      Base_IRI : String := "") return Model.Term
+      Base_IRI : String := "";
+      Limits   : Parse_Limits := (others => <>)) return Model.Term
    is
-      Tokens   : Token_Vectors.Vector;
-      Origin   : Cursors.Cursor_State := Cursors.Initial_State;
+      Tokens   : Scanners.Token_Vectors.Vector;
+      State    : Scanners.Scan_State;
       Consumed : Natural;
+      Outcome  : Scanners.Scan_Outcome;
+      Stopped  : Cursors.Cursor_State;
+      Error    : Lexers.Scan_Error_Kind;
    begin
-      Scan_Chunk (Document, True, Origin, Consumed, Tokens);
+      if Document'Length > Limits.Maximum_Bytes then
+         raise Parse_Error with "the document is too long";
+      end if;
+      State.Bytes_Seen := Document'Length;
+      Scanners.Scan_Chunk
+        (Document, True, Lexers.N3_Dialect, Limits, State, Tokens,
+         Consumed, Outcome, Stopped, Error);
+      Report (Outcome, Stopped, Error);
       return Parse_Tokens (Tokens, Base_IRI);
    end Parse;
 
@@ -780,22 +762,38 @@ package body Flyology_N3.Parsers is
    --  Chunk-fed parsing
    ---------------------------------------------------------------------
 
-   function Create (Base_IRI : String := "") return Parser is
-     (Pending  => Unbounded.Null_Unbounded_String,
-      Base     => Unbounded.To_Unbounded_String (Base_IRI),
-      Origin   => Cursors.Initial_State,
-      Tokens   => Token_Vectors.Empty_Vector,
-      Finished => False);
+   function Create
+     (Base_IRI : String := "";
+      Limits   : Parse_Limits := (others => <>)) return Parser
+   is (Pending  => Unbounded.Null_Unbounded_String,
+       Base     => Unbounded.To_Unbounded_String (Base_IRI),
+       Limits   => Limits,
+       State    => (others => <>),
+       Tokens   => Scanners.Token_Vectors.Empty_Vector,
+       Finished => False);
 
    procedure Feed (Into : in out Parser; Bytes : String) is
       Text     : constant String :=
         Unbounded.To_String (Into.Pending) & Bytes;
       Consumed : Natural;
+      Outcome  : Scanners.Scan_Outcome;
+      Stopped  : Cursors.Cursor_State;
+      Error    : Lexers.Scan_Error_Kind;
    begin
       if Into.Finished then
          raise Parser_State_Error with "parser has already finished";
       end if;
-      Scan_Chunk (Text, False, Into.Origin, Consumed, Into.Tokens);
+      if Into.State.Bytes_Seen > Integer'Last - Bytes'Length
+        or else Into.State.Bytes_Seen + Bytes'Length
+                > Into.Limits.Maximum_Bytes
+      then
+         raise Parse_Error with "the document is too long";
+      end if;
+      Into.State.Bytes_Seen := Into.State.Bytes_Seen + Bytes'Length;
+      Scanners.Scan_Chunk
+        (Text, False, Lexers.N3_Dialect, Into.Limits, Into.State,
+         Into.Tokens, Consumed, Outcome, Stopped, Error);
+      Report (Outcome, Stopped, Error);
       Into.Pending :=
         Unbounded.To_Unbounded_String (Text (Consumed .. Text'Last));
    end Feed;
@@ -803,12 +801,18 @@ package body Flyology_N3.Parsers is
    function Finish (Into : in out Parser) return Model.Term is
       Text     : constant String := Unbounded.To_String (Into.Pending);
       Consumed : Natural;
+      Outcome  : Scanners.Scan_Outcome;
+      Stopped  : Cursors.Cursor_State;
+      Error    : Lexers.Scan_Error_Kind;
    begin
       if Into.Finished then
          raise Parser_State_Error with "parser has already finished";
       end if;
       Into.Finished := True;
-      Scan_Chunk (Text, True, Into.Origin, Consumed, Into.Tokens);
+      Scanners.Scan_Chunk
+        (Text, True, Lexers.N3_Dialect, Into.Limits, Into.State,
+         Into.Tokens, Consumed, Outcome, Stopped, Error);
+      Report (Outcome, Stopped, Error);
       Into.Pending := Unbounded.Null_Unbounded_String;
       return Parse_Tokens (Into.Tokens, Unbounded.To_String (Into.Base));
    end Finish;

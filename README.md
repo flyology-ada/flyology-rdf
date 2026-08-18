@@ -173,6 +173,13 @@ large:
   emits statements as they close, while N3 and SPARQL build their tree at
   the end, because a formula is a term and a query is a tree, and neither
   is usable until it closes.
+- **Every bound is declared.** All three parsers take `Parse_Limits`: total
+  bytes, tokens, and the longest single token. The token bound also bounds
+  the buffer held across a chunk boundary, which is what stops an
+  unterminated token being retained and rescanned from its first byte on
+  every chunk -- time quadratic in what has arrived, and memory linear in
+  it. Reaching a bound is a diagnostic in RDF and a `Parse_Error` in
+  Notation3 and SPARQL, never an exhausted heap.
 - **Failures are typed.** Diagnostics carry a code, the grammar production
   that failed, and a full source span with byte, line, and column at both
   ends — not a message string.

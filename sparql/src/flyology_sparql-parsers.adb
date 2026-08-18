@@ -1,4 +1,7 @@
 with Ada.Characters.Handling;
+
+with Flyology_RDF.Lexers;
+with Flyology_RDF.Parser_Cursors;
 with Ada.Containers.Indefinite_Ordered_Maps;
 with Ada.Containers.Indefinite_Ordered_Sets;
 with Ada.Containers.Vectors;
@@ -9,7 +12,6 @@ package body Flyology_SPARQL.Parsers is
    package Lexers renames Flyology_RDF.Lexers;
    package Cursors renames Flyology_RDF.Parser_Cursors;
 
-   use type Lexers.Scan_Status;
    use type Lexers.Token_Kind;
    use type Lexers.String_Form;
    use type Syntax.Node_Kind;
@@ -30,9 +32,9 @@ package body Flyology_SPARQL.Parsers is
    function Upper (Value : String) return String
    is (Ada.Characters.Handling.To_Upper (Value));
 
-   function Parse_Tokens (Tokens : Token_Vectors.Vector) return Syntax.Query;
+   function Parse_Tokens (Tokens : Scanners.Token_Vectors.Vector) return Syntax.Query;
 
-   function Parse_Tokens (Tokens : Token_Vectors.Vector) return Syntax.Query
+   function Parse_Tokens (Tokens : Scanners.Token_Vectors.Vector) return Syntax.Query
    is
       Next    : Positive := 1;
       Tree    : Syntax.Builder;
@@ -2459,67 +2461,49 @@ package body Flyology_SPARQL.Parsers is
    --  Scanning
    ---------------------------------------------------------------------
 
-   --  Scan as far as the bytes allow, appending whole tokens and reporting
-   --  where the unread remainder begins. Ended says whether more bytes can
-   --  still arrive: it is the difference between "this token is not
-   --  finished yet" and "this token was never finished".
-   procedure Scan_Chunk
-     (Text     : String;
-      Ended    : Boolean;
-      Origin   : in out Cursors.Cursor_State;
-      Consumed : out Natural;
-      Tokens   : in out Token_Vectors.Vector)
+
+   --  Report a bound the scanner reached, in this crate's own words.
+   procedure Report
+     (Outcome : Scanners.Scan_Outcome;
+      Stopped : Cursors.Cursor_State;
+      Error   : Lexers.Scan_Error_Kind)
    is
-      Position : Cursors.Cursor_State := Origin;
-      Index    : Positive := Text'First;
-      Result   : Lexers.Token := Lexers.Null_Token;
-      Status   : Lexers.Scan_Status;
-      Error    : Lexers.Scan_Error_Kind;
-
-      Consumed_Index    : Natural := Text'First;
-      Consumed_Position : Cursors.Cursor_State := Origin;
+      Where : constant String :=
+        " at line" & Stopped.Line'Image & ", column" & Stopped.Column'Image;
    begin
-      loop
-         Lexers.Scan
-           (Text, Position, Index, Ended, Result, Status, Error,
-            Lexers.SPARQL_Dialect);
-         case Status is
-            when Lexers.Token_Found =>
-               Tokens.Append (Result);
-               Consumed_Index := Index;
-               Consumed_Position := Position;
+      case Outcome is
+         when Scanners.Scanned => null;
+         when Scanners.Malformed =>
+            raise Parse_Error with
+              "malformed token (" & Error'Image & ")" & Where;
+         when Scanners.Byte_Limit =>
+            raise Parse_Error with "the query is too long" & Where;
+         when Scanners.Token_Limit =>
+            raise Parse_Error with "the query holds too many tokens" & Where;
+         when Scanners.Token_Bytes_Limit =>
+            raise Parse_Error with "a token is too long" & Where;
+      end case;
+   end Report;
 
-            when Lexers.Needs_More_Input =>
-               if Ended then
-                  raise Parse_Error with
-                    "input ended inside a token at line"
-                    & Position.Line'Image & ", column"
-                    & Position.Column'Image;
-               end if;
-               exit;
-
-            when Lexers.End_Of_Input =>
-               Consumed_Index := Index;
-               Consumed_Position := Position;
-               exit;
-
-            when Lexers.Scan_Error =>
-               raise Parse_Error with
-                 "malformed token (" & Error'Image & ") at line"
-                 & Position.Line'Image & ", column"
-                 & Position.Column'Image;
-         end case;
-      end loop;
-      Origin := Consumed_Position;
-      Consumed := Consumed_Index;
-   end Scan_Chunk;
-
-   function Parse (Query_Text : String) return Syntax.Query is
-      Tokens   : Token_Vectors.Vector;
-      Origin   : Cursors.Cursor_State := Cursors.Initial_State;
+   function Parse
+     (Query_Text : String;
+      Limits     : Parse_Limits := (others => <>)) return Syntax.Query
+   is
+      Tokens   : Scanners.Token_Vectors.Vector;
+      State    : Scanners.Scan_State;
       Consumed : Natural;
+      Outcome  : Scanners.Scan_Outcome;
+      Stopped  : Cursors.Cursor_State;
+      Error    : Lexers.Scan_Error_Kind;
    begin
-      Scan_Chunk (Query_Text, True, Origin, Consumed, Tokens);
+      if Query_Text'Length > Limits.Maximum_Bytes then
+         raise Parse_Error with "the query is too long";
+      end if;
+      State.Bytes_Seen := Query_Text'Length;
+      Scanners.Scan_Chunk
+        (Query_Text, True, Lexers.SPARQL_Dialect, Limits, State, Tokens,
+         Consumed, Outcome, Stopped, Error);
+      Report (Outcome, Stopped, Error);
       return Parse_Tokens (Tokens);
    end Parse;
 
@@ -2527,22 +2511,36 @@ package body Flyology_SPARQL.Parsers is
    --  Chunk-fed parsing
    ---------------------------------------------------------------------
 
-   function Create return Parser is
-     (Pending  => Ada.Strings.Unbounded.Null_Unbounded_String,
-      Origin   => Cursors.Initial_State,
-      Tokens   => Token_Vectors.Empty_Vector,
-      Finished => False);
+   function Create (Limits : Parse_Limits := (others => <>)) return Parser
+   is (Pending  => Ada.Strings.Unbounded.Null_Unbounded_String,
+       Limits   => Limits,
+       State    => (others => <>),
+       Tokens   => Scanners.Token_Vectors.Empty_Vector,
+       Finished => False);
 
    procedure Feed (Into : in out Parser; Bytes : String) is
       package Unbounded renames Ada.Strings.Unbounded;
       Text     : constant String :=
         Unbounded.To_String (Into.Pending) & Bytes;
       Consumed : Natural;
+      Outcome  : Scanners.Scan_Outcome;
+      Stopped  : Cursors.Cursor_State;
+      Error    : Lexers.Scan_Error_Kind;
    begin
       if Into.Finished then
          raise Parser_State_Error with "parser has already finished";
       end if;
-      Scan_Chunk (Text, False, Into.Origin, Consumed, Into.Tokens);
+      if Into.State.Bytes_Seen > Integer'Last - Bytes'Length
+        or else Into.State.Bytes_Seen + Bytes'Length
+                > Into.Limits.Maximum_Bytes
+      then
+         raise Parse_Error with "the query is too long";
+      end if;
+      Into.State.Bytes_Seen := Into.State.Bytes_Seen + Bytes'Length;
+      Scanners.Scan_Chunk
+        (Text, False, Lexers.SPARQL_Dialect, Into.Limits, Into.State,
+         Into.Tokens, Consumed, Outcome, Stopped, Error);
+      Report (Outcome, Stopped, Error);
       Into.Pending :=
         Unbounded.To_Unbounded_String (Text (Consumed .. Text'Last));
    end Feed;
@@ -2551,12 +2549,18 @@ package body Flyology_SPARQL.Parsers is
       package Unbounded renames Ada.Strings.Unbounded;
       Text     : constant String := Unbounded.To_String (Into.Pending);
       Consumed : Natural;
+      Outcome  : Scanners.Scan_Outcome;
+      Stopped  : Cursors.Cursor_State;
+      Error    : Lexers.Scan_Error_Kind;
    begin
       if Into.Finished then
          raise Parser_State_Error with "parser has already finished";
       end if;
       Into.Finished := True;
-      Scan_Chunk (Text, True, Into.Origin, Consumed, Into.Tokens);
+      Scanners.Scan_Chunk
+        (Text, True, Lexers.SPARQL_Dialect, Into.Limits, Into.State,
+         Into.Tokens, Consumed, Outcome, Stopped, Error);
+      Report (Outcome, Stopped, Error);
       Into.Pending := Unbounded.Null_Unbounded_String;
       return Parse_Tokens (Into.Tokens);
    end Finish;

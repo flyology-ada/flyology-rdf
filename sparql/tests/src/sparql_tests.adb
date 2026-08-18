@@ -312,6 +312,48 @@ begin
    Check_Round_Trip ("SELECT * { ?s ?p TRUE }",
                      "a case-variant boolean in a pattern");
 
+   --  The same bound, and the same reason it must bite during a Feed:
+   --  Finish refuses an unterminated token regardless, so only a chunk
+   --  that crosses the bound tells a bounded buffer from an unbounded one.
+   declare
+      Limits : constant Parsers.Parse_Limits :=
+        (Maximum_Token_Bytes => 64, others => <>);
+      Reader : Parsers.Parser := Parsers.Create (Limits);
+      Chunk  : constant String (1 .. 32) := (others => 'x');
+      Refused_During_Feed : Boolean := False;
+   begin
+      Parsers.Feed (Reader, "<");
+      for Round in 1 .. 8 loop
+         begin
+            Parsers.Feed (Reader, Chunk);
+         exception
+            when Parsers.Parse_Error =>
+               Refused_During_Feed := True;
+               exit;
+         end;
+      end loop;
+      Check (Refused_During_Feed,
+             "an unterminated token is refused while it is still open");
+   end;
+
+   declare
+      Limits : constant Parsers.Parse_Limits :=
+        (Maximum_Bytes => 8, others => <>);
+      Ignored : Boolean := False;
+   begin
+      declare
+         Result : constant Syntax.Query :=
+           Parsers.Parse ("SELECT * { ?s ?p ?o }", Limits);
+      begin
+         Ignored := Syntax.Form (Result) = Syntax.Select_Query;
+      end;
+      Check (False, "a query past the byte limit must be refused");
+      pragma Unreferenced (Ignored);
+   exception
+      when Parsers.Parse_Error =>
+         Check (True, "a query past the byte limit is refused");
+   end;
+
    --  SourceSelector is an iri; VarOrIri is a variable or an iri;
    --  DataBlockValue is a ground term. All three were read with the
    --  general term parser, which admits a literal, a blank node and "a".

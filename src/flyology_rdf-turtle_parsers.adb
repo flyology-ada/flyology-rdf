@@ -1536,6 +1536,23 @@ package body Flyology_RDF.Turtle_Parsers is
 
       --  Retain only what has not been consumed. Whitespace and completed
       --  tokens are dropped, so the buffer holds at most one partial token.
+      --
+      --  That partial token is bounded here rather than when it finishes.
+      --  A token that never finishes never reached the check below, so an
+      --  unterminated string or comment was retained whole and rescanned
+      --  from its first byte on every chunk: time quadratic in what had
+      --  arrived, and a buffer that grew to the byte limit however small
+      --  the token limit was set.
+      if not Into.Failed
+        and then Text'Last - Consumed_Index + 1
+                 > Into.Limits_Data.Maximum_Token_Bytes
+      then
+         Report (Token_Limit, To_Span (Consumed_Position, Position));
+         Into.Pending := Unbounded.Null_Unbounded_String;
+         Into.Pending_Origin := Consumed_Position;
+         return;
+      end if;
+
       Into.Pending := Unbounded.To_Unbounded_String
         (Text (Consumed_Index .. Text'Last));
       Into.Pending_Origin := Consumed_Position;

@@ -215,7 +215,38 @@ procedure Parser_Tests is
 
    EX : constant String := "@prefix ex: <http://example.org/> ." & ASCII.LF;
 
+   --  A token that never finishes never reached the completed-token check,
+   --  so it was retained whole and rescanned from its first byte on every
+   --  chunk. The bound is on the buffer now, so it bites while the token
+   --  is still open.
+   procedure Check_Unterminated_Is_Bounded is
+      Sink   : Collector;
+      Limits : constant Parsers.Parse_Limits :=
+        (Maximum_Token_Bytes => 64, others => <>);
+      Parser : Parsers.Parser :=
+        Parsers.Create (Source_Name => "test", Limits => Limits);
+      Chunk  : constant String (1 .. 32) := (others => 'x');
+      Status : Parsers.Parse_Status;
+   begin
+      --  An opening quote and then bytes without end.
+      Parsers.Feed (Parser, """", Sink);
+      for Round in 1 .. 8 loop
+         Parsers.Feed (Parser, Chunk, Sink);
+      end loop;
+      Status := Parsers.Finish (Parser, Sink);
+      Check (Status = Parsers.Parse_Failed,
+             "an unterminated token is refused, not accumulated");
+      Check (Sink.Last_Code = Parsers.Token_Limit,
+             "and the diagnostic is the token limit, got "
+             & Parsers.Diagnostic_Code'Image (Sink.Last_Code));
+      Check (Parsers.Work (Parser).Maximum_Pending_Bytes <= 128,
+             "and the buffer never grew past the bound, reached"
+             & Natural'Image (Parsers.Work (Parser).Maximum_Pending_Bytes));
+   end Check_Unterminated_Is_Bounded;
+
 begin
+   Check_Unterminated_Is_Bounded;
+
    IO.Put_Line ("Parser tests");
 
    ------------------------------------------------------------------

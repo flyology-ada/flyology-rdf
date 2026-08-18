@@ -226,6 +226,45 @@ begin
    ------------------------------------------------------------------
    Check_Round_Trip (EX & "ex:s ex:p ex:o .", "a plain statement");
 
+   --  An unterminated token must be refused while it is still open, not
+   --  at Finish. Finish refuses it anyway, because ending mid-token is a
+   --  scan error, so only the chunk that crosses the bound distinguishes a
+   --  bounded buffer from one that grew to hold the whole thing.
+   declare
+      Limits : constant Parsers.Parse_Limits :=
+        (Maximum_Token_Bytes => 64, others => <>);
+      Reader : Parsers.Parser := Parsers.Create ("", Limits);
+      Chunk  : constant String (1 .. 32) := (others => 'x');
+      Refused_During_Feed : Boolean := False;
+   begin
+      Parsers.Feed (Reader, """");
+      for Round in 1 .. 8 loop
+         begin
+            Parsers.Feed (Reader, Chunk);
+         exception
+            when Parsers.Parse_Error =>
+               Refused_During_Feed := True;
+               exit;
+         end;
+      end loop;
+      Check (Refused_During_Feed,
+             "an unterminated token is refused while it is still open");
+   end;
+
+   declare
+      Limits : constant Parsers.Parse_Limits :=
+        (Maximum_Bytes => 32, others => <>);
+      Long   : constant String (1 .. 64) := (others => ' ');
+      Ignored : Model.Term := Model.Empty_Formula;
+   begin
+      Ignored := Parsers.Parse (Long, "", Limits);
+      Check (False, "a document past the byte limit must be refused");
+      pragma Unreferenced (Ignored);
+   exception
+      when Parsers.Parse_Error =>
+         Check (True, "a document past the byte limit is refused");
+   end;
+
    --  An anonymous node is a different existential from a named one, so a
    --  document label whose spelling a generated label already took must be
    --  renamed rather than merged with it.

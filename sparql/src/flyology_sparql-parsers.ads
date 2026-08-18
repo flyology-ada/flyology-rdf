@@ -1,8 +1,6 @@
-with Ada.Containers.Indefinite_Vectors;
 with Ada.Strings.Unbounded;
 
-with Flyology_RDF.Lexers;
-with Flyology_RDF.Parser_Cursors;
+with Flyology_RDF.Chunk_Scanners;
 
 with Flyology_SPARQL.Syntax;
 
@@ -27,7 +25,14 @@ package Flyology_SPARQL.Parsers is
    --  @param Query_Text The SPARQL text
    --  @return The parsed query
    --  @exception Parse_Error The query is not well-formed
-   function Parse (Query_Text : String) return Syntax.Query;
+   --  What one query may cost to read. A caller taking input from a
+   --  network must be able to say what it will accept, and the defaults
+   --  are the same as the RDF parser's.
+   subtype Parse_Limits is Flyology_RDF.Chunk_Scanners.Scan_Limits;
+
+   function Parse
+     (Query_Text : String;
+      Limits     : Parse_Limits := (others => <>)) return Syntax.Query;
 
    ---------------------------------------------------------------------
    --  Chunk-fed parsing
@@ -49,7 +54,7 @@ package Flyology_SPARQL.Parsers is
 
    --  Start a parser.
    --  @return A parser awaiting its first chunk
-   function Create return Parser;
+   function Create (Limits : Parse_Limits := (others => <>)) return Parser;
 
    --  Supply the next piece of the query.
    --  @param Into The parser
@@ -67,20 +72,17 @@ package Flyology_SPARQL.Parsers is
 
 private
 
-   package Token_Vectors is new Ada.Containers.Indefinite_Vectors
-     (Index_Type   => Positive,
-      Element_Type => Flyology_RDF.Lexers.Token,
-      "="          => Flyology_RDF.Lexers."=");
-
    --  Pending holds at most one partial token: everything the scanner has
    --  read is dropped, and Origin is the cursor where the remainder
    --  starts, so line and column survive a split as if there had been
    --  none.
+   package Scanners renames Flyology_RDF.Chunk_Scanners;
+
    type Parser is limited record
       Pending  : Ada.Strings.Unbounded.Unbounded_String;
-      Origin   : Flyology_RDF.Parser_Cursors.Cursor_State :=
-        Flyology_RDF.Parser_Cursors.Initial_State;
-      Tokens   : Token_Vectors.Vector;
+      Limits   : Parse_Limits;
+      State    : Scanners.Scan_State;
+      Tokens   : Scanners.Token_Vectors.Vector;
       Finished : Boolean := False;
    end record;
 
