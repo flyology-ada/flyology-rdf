@@ -66,10 +66,12 @@ project uses them for different layers or mechanisms.
 ## API links
 
 On each Guide page, link the first visible explanatory mention of every
-project-owned public API entity to its generated GNATdoc entry. The generated
-reference covers `flyology_rdf`. The `flyology_n3` and `flyology_sparql`
-crates have no generated reference yet, so name their entities exactly and do
-not link them until one exists. API entities include packages, generic packages, subprograms, types,
+project-owned public API entity to its generated GNATdoc entry. All three
+crates have one: `flyology_rdf` at `api/`, `flyology_n3` at `n3-api/`, and
+`flyology_sparql` at `sparql-api/`. Each sibling reference also documents the
+`flyology_rdf` units its crate depends on, so link a `flyology_rdf` entity to
+`api/` wherever it is mentioned and keep one canonical target per entity.
+API entities include packages, generic packages, subprograms, types,
 objects, exceptions, enumeration literals, and other documented declarations.
 
 - Follow document reading order. The first mention can occur in a hero,
@@ -149,8 +151,9 @@ implementation, script, contract, or invariant that supports it.
   `AGENTS.md` invariants.
 - Check that each page links the first explanatory mention of every
   project-owned public API entity to the correct generated GNATdoc entry,
-  Confirm that entities from `flyology_n3` and `flyology_sparql` are named
-  exactly and are not linked to an unrelated `flyology_rdf` page.
+  resolving each target through the matching crate's generated output or its
+  search index. Confirm that a `flyology_rdf` entity links to `api/` and not
+  to the copy of it inside a sibling reference.
 - Check every condition, ownership rule, exception, timing fact, lifecycle
   boundary, concurrency limit, and experimental qualification.
 - Check that every `must`, `can`, and `may` retains the intended requirement,
