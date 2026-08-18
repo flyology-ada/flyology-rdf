@@ -1,11 +1,7 @@
 with Ada.Containers.Indefinite_Ordered_Maps;
 with Ada.Containers.Indefinite_Ordered_Sets;
-with Ada.Containers.Indefinite_Vectors;
-with Ada.Strings.Unbounded;
 
 with Flyology_RDF.IRIs;
-with Flyology_RDF.Lexers;
-with Flyology_RDF.Parser_Cursors;
 with Flyology_RDF.Terms;
 
 package body Flyology_N3.Parsers is
@@ -19,11 +15,6 @@ package body Flyology_N3.Parsers is
    use type Lexers.Scan_Status;
    use type Lexers.Token_Kind;
    use type Lexers.Direction_Value;
-
-   package Token_Vectors is new Ada.Containers.Indefinite_Vectors
-     (Index_Type   => Positive,
-      Element_Type => Lexers.Token,
-      "="          => Lexers."=");
 
    package Prefix_Maps is new Ada.Containers.Indefinite_Ordered_Maps
      (Key_Type => String, Element_Type => String);
@@ -47,11 +38,14 @@ package body Flyology_N3.Parsers is
    XSD_Boolean : constant String :=
      "http://www.w3.org/2001/XMLSchema#boolean";
 
-   function Parse
-     (Document : String;
-      Base_IRI : String := "") return Model.Term
+   function Parse_Tokens
+     (Tokens   : Token_Vectors.Vector;
+      Base_IRI : String) return Model.Term;
+
+   function Parse_Tokens
+     (Tokens   : Token_Vectors.Vector;
+      Base_IRI : String) return Model.Term
    is
-      Tokens : Token_Vectors.Vector;
       Next   : Positive := 1;
 
       Prefixes : Prefix_Maps.Map;
@@ -80,31 +74,6 @@ package body Flyology_N3.Parsers is
 
       --  Tokenize the whole document up front. N3 is parsed whole, so
       --  there is nothing to gain from interleaving.
-      procedure Tokenize is
-         Position : Cursors.Cursor_State := Cursors.Initial_State;
-         Index    : Positive := Document'First;
-         Result   : Lexers.Token := Lexers.Null_Token;
-         Status   : Lexers.Scan_Status;
-         Error    : Lexers.Scan_Error_Kind;
-      begin
-         loop
-            Lexers.Scan
-              (Document, Position, Index, True, Result, Status, Error,
-               Lexers.N3_Dialect);
-            case Status is
-               when Lexers.Token_Found =>
-                  Tokens.Append (Result);
-               when Lexers.End_Of_Input =>
-                  exit;
-               when others =>
-                  raise Parse_Error with
-                    "malformed token (" & Error'Image & ") at line"
-                    & Position.Line'Image & ", column"
-                    & Position.Column'Image;
-            end case;
-         end loop;
-      end Tokenize;
-
       function At_End return Boolean is (Next > Tokens.Last_Index);
 
       function Peek return Lexers.Token_Kind
@@ -646,11 +615,112 @@ package body Flyology_N3.Parsers is
          raise Parse_Error with "base IRI is not absolute";
       end if;
 
-      Tokenize;
       while not At_End loop
          Parse_Statement (Document_Sink);
       end loop;
       return Model.Formula (Document_Sink.Items);
+   end Parse_Tokens;
+
+   ---------------------------------------------------------------------
+   --  Scanning
+   ---------------------------------------------------------------------
+
+   --  Scan as far as the bytes allow, appending whole tokens and reporting
+   --  where the unread remainder begins. Ended says whether more bytes can
+   --  still arrive: it is the difference between "this token is not
+   --  finished yet" and "this token was never finished".
+   procedure Scan_Chunk
+     (Text     : String;
+      Ended    : Boolean;
+      Origin   : in out Cursors.Cursor_State;
+      Consumed : out Natural;
+      Tokens   : in out Token_Vectors.Vector)
+   is
+      Position : Cursors.Cursor_State := Origin;
+      Index    : Positive := Text'First;
+      Result   : Lexers.Token := Lexers.Null_Token;
+      Status   : Lexers.Scan_Status;
+      Error    : Lexers.Scan_Error_Kind;
+
+      Consumed_Index    : Natural := Text'First;
+      Consumed_Position : Cursors.Cursor_State := Origin;
+   begin
+      loop
+         Lexers.Scan
+           (Text, Position, Index, Ended, Result, Status, Error,
+            Lexers.N3_Dialect);
+         case Status is
+            when Lexers.Token_Found =>
+               Tokens.Append (Result);
+               Consumed_Index := Index;
+               Consumed_Position := Position;
+
+            when Lexers.Needs_More_Input =>
+               exit;
+
+            when Lexers.End_Of_Input =>
+               Consumed_Index := Index;
+               Consumed_Position := Position;
+               exit;
+
+            when Lexers.Scan_Error =>
+               raise Parse_Error with
+                 "malformed token (" & Error'Image & ") at line"
+                 & Position.Line'Image & ", column"
+                 & Position.Column'Image;
+         end case;
+      end loop;
+      Origin := Consumed_Position;
+      Consumed := Consumed_Index;
+   end Scan_Chunk;
+
+   function Parse
+     (Document : String;
+      Base_IRI : String := "") return Model.Term
+   is
+      Tokens   : Token_Vectors.Vector;
+      Origin   : Cursors.Cursor_State := Cursors.Initial_State;
+      Consumed : Natural;
+   begin
+      Scan_Chunk (Document, True, Origin, Consumed, Tokens);
+      return Parse_Tokens (Tokens, Base_IRI);
    end Parse;
+
+   ---------------------------------------------------------------------
+   --  Chunk-fed parsing
+   ---------------------------------------------------------------------
+
+   function Create (Base_IRI : String := "") return Parser is
+     (Pending  => Unbounded.Null_Unbounded_String,
+      Base     => Unbounded.To_Unbounded_String (Base_IRI),
+      Origin   => Cursors.Initial_State,
+      Tokens   => Token_Vectors.Empty_Vector,
+      Finished => False);
+
+   procedure Feed (Into : in out Parser; Bytes : String) is
+      Text     : constant String :=
+        Unbounded.To_String (Into.Pending) & Bytes;
+      Consumed : Natural;
+   begin
+      if Into.Finished then
+         raise Parser_State_Error with "parser has already finished";
+      end if;
+      Scan_Chunk (Text, False, Into.Origin, Consumed, Into.Tokens);
+      Into.Pending :=
+        Unbounded.To_Unbounded_String (Text (Consumed .. Text'Last));
+   end Feed;
+
+   function Finish (Into : in out Parser) return Model.Term is
+      Text     : constant String := Unbounded.To_String (Into.Pending);
+      Consumed : Natural;
+   begin
+      if Into.Finished then
+         raise Parser_State_Error with "parser has already finished";
+      end if;
+      Into.Finished := True;
+      Scan_Chunk (Text, True, Into.Origin, Consumed, Into.Tokens);
+      Into.Pending := Unbounded.Null_Unbounded_String;
+      return Parse_Tokens (Into.Tokens, Unbounded.To_String (Into.Base));
+   end Finish;
 
 end Flyology_N3.Parsers;

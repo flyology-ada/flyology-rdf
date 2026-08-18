@@ -21,6 +21,7 @@ with Ada.Text_IO;
 
 with Flyology_N3.Model;
 with Flyology_N3.Parsers;
+with Flyology_N3.Writers;
 
 with Flyology_RDF.Datasets;
 with Flyology_RDF.IRIs;
@@ -38,6 +39,7 @@ procedure N3_Conformance is
    package Terms renames Flyology_RDF.Terms;
    package RDF_Parsers renames Flyology_RDF.Turtle_Parsers;
    package N3_Parsers renames Flyology_N3.Parsers;
+   package N3_Writers renames Flyology_N3.Writers;
    package Model renames Flyology_N3.Model;
 
    use type RDF_Parsers.Parse_Status;
@@ -66,6 +68,7 @@ procedure N3_Conformance is
    --  measure agreement with a decision its own authors reversed. The
    --  status is published in the manifest, so this reads it rather than
    --  deciding it here.
+   Streaming_Differed : Natural := 0;
    Withdrawn          : Natural := 0;
    Withdrawn_Diverged : Natural := 0;
    Bytes_Parsed      : Natural := 0;
@@ -244,12 +247,34 @@ procedure N3_Conformance is
 
             begin
                declare
+                  Base   : constant String := "http://example.org/n3/";
                   Result : constant Model.Term :=
-                    N3_Parsers.Parse (Text, "http://example.org/n3/");
-                  Ignored : constant Natural :=
-                    Model.Statement_Count (Result);
+                    N3_Parsers.Parse (Text, Base);
+                  Whole  : constant String := N3_Writers.To_N3 (Result);
                begin
-                  pragma Unreferenced (Ignored);
+                  --  The same document fed one byte at a time has to come
+                  --  out the same. Splitting at every boundary in turn is
+                  --  the only way to be sure none of them is special, and
+                  --  the writer's output is what makes two formulas
+                  --  comparable.
+                  declare
+                     Streamed : N3_Parsers.Parser :=
+                       N3_Parsers.Create (Base);
+                  begin
+                     for Index in Text'Range loop
+                        N3_Parsers.Feed (Streamed, Text (Index .. Index));
+                     end loop;
+                     if N3_Writers.To_N3 (N3_Parsers.Finish (Streamed))
+                        /= Whole
+                     then
+                        Streaming_Differed := Streaming_Differed + 1;
+                        Unbounded.Append
+                          (Divergences,
+                           "    " & Entry_Name
+                           & ": chunk-fed parse differs from whole"
+                           & ASCII.LF);
+                     end if;
+                  end;
                end;
             exception
                when Error : others =>
@@ -380,6 +405,7 @@ begin
    IO.Put_Line ("  skipped, missing    " & Skipped_Missing'Image);
    IO.Put_Line ("  rejected, valid     " & Unexpected_Reject'Image);
    IO.Put_Line ("  accepted, invalid   " & Unexpected_Accept'Image);
+   IO.Put_Line ("  streaming differed  " & Streaming_Differed'Image);
    IO.Put_Line ("  withdrawn, diverged " & Withdrawn_Diverged'Image);
 
    if Unbounded.Length (Divergences) > 0 then
@@ -390,7 +416,7 @@ begin
    if Examined = 0 then
       IO.Put_Line ("FAIL n3_conformance: the corpus is present but empty");
       Ada.Command_Line.Set_Exit_Status (1);
-   elsif Unexpected_Accept + Unexpected_Reject > 0 then
+   elsif Unexpected_Accept + Unexpected_Reject + Streaming_Differed > 0 then
       IO.Put_Line ("FAIL n3_conformance");
       Ada.Command_Line.Set_Exit_Status (1);
    else

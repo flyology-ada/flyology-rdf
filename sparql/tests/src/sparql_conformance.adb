@@ -22,6 +22,7 @@ with Ada.Text_IO;
 
 with Flyology_SPARQL.Parsers;
 with Flyology_SPARQL.Syntax;
+with Flyology_SPARQL.Writers;
 
 with Flyology_RDF.Datasets;
 with Flyology_RDF.IRIs;
@@ -40,6 +41,7 @@ procedure SPARQL_Conformance is
    package RDF_Parsers renames Flyology_RDF.Turtle_Parsers;
    package Query_Parsers renames Flyology_SPARQL.Parsers;
    package Query_Syntax renames Flyology_SPARQL.Syntax;
+   package Query_Writers renames Flyology_SPARQL.Writers;
 
    use type RDF_Parsers.Parse_Status;
    use type Terms.Term_Kind;
@@ -60,6 +62,7 @@ procedure SPARQL_Conformance is
    Negative_Syntax   : Natural := 0;
    Bytes_Parsed      : Natural := 0;
    Unexpected_Accept : Natural := 0;
+   Streaming_Differed : Natural := 0;
    Unexpected_Reject : Natural := 0;
    Skipped_Evaluation : Natural := 0;
    Skipped_Update     : Natural := 0;
@@ -223,10 +226,34 @@ procedure SPARQL_Conformance is
                declare
                   Result : constant Query_Syntax.Query :=
                     Query_Parsers.Parse (Text);
-                  Ignored : constant Query_Syntax.Query_Form :=
-                    Query_Syntax.Form (Result);
+                  Whole  : constant String := Query_Writers.To_SPARQL (Result);
                begin
-                  pragma Unreferenced (Ignored);
+                  --  The same query fed one byte at a time has to come out
+                  --  the same. Splitting at every boundary in turn is the
+                  --  only way to be sure none of them is special, and the
+                  --  writer's output is what makes two trees comparable.
+                  declare
+                     Streamed : Query_Parsers.Parser :=
+                       Query_Parsers.Create;
+                  begin
+                     for Index in Text'Range loop
+                        Query_Parsers.Feed (Streamed, Text (Index .. Index));
+                     end loop;
+                     declare
+                        Piecewise : constant String :=
+                          Query_Writers.To_SPARQL
+                            (Query_Parsers.Finish (Streamed));
+                     begin
+                        if Piecewise /= Whole then
+                           Streaming_Differed := Streaming_Differed + 1;
+                           Unbounded.Append
+                             (Divergences,
+                              "    " & Entry_Name
+                              & ": chunk-fed parse differs from whole"
+                              & ASCII.LF);
+                        end if;
+                     end;
+                  end;
                end;
             exception
                when Error : others =>
@@ -334,6 +361,7 @@ begin
    IO.Put_Line ("  skipped, missing    " & Skipped_Missing'Image);
    IO.Put_Line ("  rejected, valid     " & Unexpected_Reject'Image);
    IO.Put_Line ("  accepted, invalid   " & Unexpected_Accept'Image);
+   IO.Put_Line ("  streaming differed  " & Streaming_Differed'Image);
 
    if Unbounded.Length (Divergences) > 0 then
       IO.Put_Line ("  divergences:");
@@ -343,7 +371,7 @@ begin
    if Examined = 0 then
       IO.Put_Line ("FAIL sparql_conformance: the corpus is present but empty");
       Ada.Command_Line.Set_Exit_Status (1);
-   elsif Unexpected_Accept + Unexpected_Reject > 0 then
+   elsif Unexpected_Accept + Unexpected_Reject + Streaming_Differed > 0 then
       IO.Put_Line ("FAIL sparql_conformance");
       Ada.Command_Line.Set_Exit_Status (1);
    else

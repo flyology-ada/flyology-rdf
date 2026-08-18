@@ -37,10 +37,14 @@ well in a plain sequential program and inside a lightweight-task runtime.
   prefixed name whose prefix is `prefix`, and one that requires whitespace
   after `a` rejects `a<http://example.org/C>`. The RDF grammars cannot see
   an N3 or SPARQL token at all.
-- **Parsing is chunk-fed.** RDF input may be split at any byte boundary,
-  including mid-escape and mid-literal, and produces a byte-identical event
-  stream regardless. Every document in the tests is parsed twice, whole and
-  one byte at a time, and the two must agree.
+- **Parsing is chunk-fed.** Input to any of the three may be split at any
+  byte boundary, including mid-escape and mid-literal, and the result is
+  the one the whole text would have given. Every document in the tests is
+  parsed twice, whole and one byte at a time, and the two must agree --
+  1,161 N3 documents, 317 SPARQL queries and the RDF suite besides. RDF
+  emits statements as they close; N3 and SPARQL build their tree at the
+  end, because a formula and a query are terms and a term means nothing
+  until it is closed.
 - **Failures are typed.** Diagnostics carry a code, the grammar production
   that failed, and a full source span with byte, line, and column at both
   ends — not a message string.
