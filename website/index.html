@@ -102,13 +102,14 @@ Written :=
       <section class="section page-shell" aria-labelledby="evidence-title">
         <div class="section-heading"><div><p class="eyebrow">Conformance</p><h2 id="evidence-title">What each harness examined.</h2></div><p>A harness reads the W3C manifests with this library's own Turtle parser. It reports counts, not a verdict. Corpora are pinned by commit.</p></div>
         <div class="benchmark-table-wrap">
-          <table>
-            <thead><tr><th scope="col">Suite</th><th scope="col">Examined</th><th scope="col">Rejected valid</th><th scope="col">Accepted invalid</th><th scope="col">Wrong result</th><th scope="col">Writer differed</th></tr></thead>
+          <table class="benchmark-table">
+            <caption>Rejected counts valid documents refused. Accepted counts invalid documents admitted. Wrong counts results that differ from the expected graph. Writer counts documents whose own serialization did not read back.</caption>
+            <thead><tr><th scope="col">Suite</th><th scope="col">Examined</th><th scope="col">Rejected</th><th scope="col">Accepted</th><th scope="col">Wrong</th><th scope="col">Writer</th></tr></thead>
             <tbody>
-              <tr><td>RDF 1.1 and 1.2</td><td>1,050</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
-              <tr><td>RDFC-1.0</td><td>86</td><td>&mdash;</td><td>&mdash;</td><td>0</td><td>&mdash;</td></tr>
-              <tr><td>Notation3</td><td>1,070</td><td>0</td><td>0</td><td>&mdash;</td><td>0</td></tr>
-              <tr><td>SPARQL 1.1 syntax</td><td>488</td><td>0</td><td>0</td><td>&mdash;</td><td>0</td></tr>
+              <tr><th scope="row">RDF 1.1 and 1.2</th><td>1,050</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+              <tr><th scope="row">RDFC-1.0</th><td>86</td><td>&mdash;</td><td>&mdash;</td><td>0</td><td>&mdash;</td></tr>
+              <tr><th scope="row">Notation3</th><td>1,070</td><td>0</td><td>0</td><td>&mdash;</td><td>0</td></tr>
+              <tr><th scope="row">SPARQL 1.1 syntax</th><td>488</td><td>0</td><td>0</td><td>&mdash;</td><td>0</td></tr>
             </tbody>
           </table>
         </div>
