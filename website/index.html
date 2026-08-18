@@ -103,7 +103,7 @@ Written :=
         <div class="section-heading"><div><p class="eyebrow">Conformance</p><h2 id="evidence-title">What each harness examined.</h2></div><p>A harness reads the W3C manifests with this library's own Turtle parser. It reports counts, not a verdict. Corpora are pinned by commit.</p></div>
         <div class="benchmark-table-wrap">
           <table class="benchmark-table">
-            <caption>Rejected counts valid documents refused. Accepted counts invalid documents admitted. Wrong counts results that differ from the expected graph. Writer counts documents whose own serialization did not read back.</caption>
+            <caption>Counts per suite.</caption>
             <thead><tr><th scope="col">Suite</th><th scope="col">Examined</th><th scope="col">Rejected</th><th scope="col">Accepted</th><th scope="col">Wrong</th><th scope="col">Writer</th></tr></thead>
             <tbody>
               <tr><th scope="row">RDF 1.1 and 1.2</th><td>1,050</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
@@ -113,6 +113,7 @@ Written :=
             </tbody>
           </table>
         </div>
+        <p class="diagram-subtitle">Rejected counts valid documents refused. Accepted counts invalid documents admitted. Wrong counts results that differ from the expected graph. Writer counts documents whose own serialization did not read back. A dash marks a column the suite does not measure.</p>
         <div class="decision-list"><dl>
           <div class="decision-row"><dt>Skipped</dt><dd>The RDFC-1.0 suite is run whole. 811 SPARQL entries need a query engine and 83 are Update rather than queries; 193 Notation3 entries need a reasoner. RDF evaluation entries are run, and compared by canonical form.</dd></div>
           <div class="decision-row"><dt>Withdrawn</dt><dd>The Notation3 suite carries 123 further entries marked <code>rdft:approval rdft:Rejected</code>. They are run and counted apart. Twelve diverge. Each is reported with the reason this library rejected it.</dd></div>
