@@ -10,6 +10,7 @@
 --  chunk-fed.
 
 with Ada.Command_Line;
+with Checkpoint_Probe;
 with Ada.Strings.Unbounded;
 with Ada.Text_IO;
 with Flyology_RDF.IRIs;
@@ -28,6 +29,7 @@ procedure Parser_Tests is
 
    use type Parsers.Parse_Status;
    use type Parsers.Diagnostic_Code;
+   use type Parsers.Work_Count;
    use type Quads.Graph_Name_Kind;
    use type Terms.Term_Kind;
    use type Terms.Base_Direction;
@@ -250,7 +252,8 @@ procedure Parser_Tests is
              & Parsers.Diagnostic_Code'Image (Sink.Last_Code));
       Check (Parsers.Work (Parser).Maximum_Pending_Bytes <= 128,
              "and the buffer never grew past the bound, reached"
-             & Natural'Image (Parsers.Work (Parser).Maximum_Pending_Bytes));
+             & Parsers.Work_Count'Image
+               (Parsers.Work (Parser).Maximum_Pending_Bytes));
    end Check_Unterminated_Is_Bounded;
 
    --  Parse under a stated bound and require the diagnostic it names.
@@ -821,6 +824,219 @@ begin
      (EX & "ex:s ex:p ex:o .",
       "a document with no blocks declares no graph",
       "");
+
+   ------------------------------------------------------------------
+   --  The byte limit, exactly
+   ------------------------------------------------------------------
+   --  The check compares against the room left rather than adding and
+   --  testing after, so that it cannot overflow when a caller sets the
+   --  limit near the top of the range. Restructuring a comparison is
+   --  where an off-by-one appears, so pin both sides of the boundary.
+   declare
+      Document : constant String :=
+        "<http://e/s> <http://e/p> <http://e/o> .";
+
+      function Accepted (Allowance : Positive) return Boolean;
+
+      function Accepted (Allowance : Positive) return Boolean is
+         Sink   : Collector;
+         Limits : constant Parsers.Parse_Limits :=
+           (Maximum_Bytes => Allowance, others => <>);
+         Parser : Parsers.Parser :=
+           Parsers.Create (Source_Name => "test", Limits => Limits);
+      begin
+         Parsers.Feed (Parser, Document, Sink);
+         return Parsers.Finish (Parser, Sink) = Parsers.Parse_Succeeded;
+      end Accepted;
+   begin
+      Check (Accepted (Document'Length),
+             "a document of exactly the byte limit is accepted");
+      Check (not Accepted (Document'Length - 1),
+             "one byte past the limit is refused");
+   end;
+
+   --  Bytes_Fed counts what was handed in, so it is the one statistic a
+   --  caller can check against something it already knows.
+   declare
+      Document : constant String :=
+        "<http://e/s> <http://e/p> <http://e/o> .";
+      Sink   : Collector;
+      Parser : Parsers.Parser := Parsers.Create (Source_Name => "test");
+      Status : Parsers.Parse_Status;
+   begin
+      for Index in Document'Range loop
+         Parsers.Feed (Parser, Document (Index .. Index), Sink);
+      end loop;
+      Status := Parsers.Finish (Parser, Sink);
+      Check (Status = Parsers.Parse_Succeeded, "the document parses");
+      Check (Parsers.Work (Parser).Bytes_Fed
+             = Parsers.Work_Count (Document'Length),
+             "Bytes_Fed counts every byte handed in, got"
+             & Parsers.Work_Count'Image (Parsers.Work (Parser).Bytes_Fed));
+      Check (Parsers.Work (Parser).Bytes_Scanned
+             >= Parsers.Work (Parser).Bytes_Fed,
+             "Bytes_Scanned counts walking, never less than what arrived");
+   end;
+
+   ------------------------------------------------------------------
+   --  Blank node prefixes
+   ------------------------------------------------------------------
+   --  The prefix exists so that two documents read by one consumer cannot
+   --  share a label. That only holds if it reaches both the labels a
+   --  document writes and the labels the parser invents; covering one and
+   --  not the other would leave the collision it was added to prevent.
+   declare
+      function Parsed (Document, Prefix : String) return String;
+
+      function Parsed (Document, Prefix : String) return String is
+         Sink   : Collector;
+         Parser : Parsers.Parser :=
+           Parsers.Create
+             (Source_Name => "test", Blank_Node_Prefix => Prefix);
+         Status : Parsers.Parse_Status;
+      begin
+         Parsers.Feed (Parser, Document, Sink);
+         Status := Parsers.Finish (Parser, Sink);
+         Check (Status = Parsers.Parse_Succeeded,
+                "the prefixed document parses");
+         return Unbounded.To_String (Sink.Lines);
+      end Parsed;
+   begin
+      Check_Equal
+        (Parsed ("_:a <http://p> <http://o> .", "doc1-"),
+         "_:doc1-a <http://p> <http://o> ." & ASCII.LF,
+         "a prefix reaches a label the document wrote");
+
+      Check_Equal
+        (Parsed ("[] <http://p> <http://o> .", "doc1-"),
+         "_:doc1-b1 <http://p> <http://o> ." & ASCII.LF,
+         "a prefix reaches a label the parser generated");
+
+      --  The point of the whole feature: same document, two readers, no
+      --  shared label between them.
+      Check
+        (Parsed ("_:a <http://p> <http://o> .", "one-")
+         /= Parsed ("_:a <http://p> <http://o> .", "two-"),
+         "two prefixes keep two readings of one label apart");
+
+      Check_Equal
+        (Parsed ("_:a <http://p> <http://o> .", ""),
+         "_:a <http://p> <http://o> ." & ASCII.LF,
+         "no prefix leaves the label alone");
+   end;
+
+   ------------------------------------------------------------------
+   --  The cooperative checkpoint
+   ------------------------------------------------------------------
+   --  This is how a caller keeps a long parse from holding a task. It is
+   --  documented, and until now nothing called it.
+   declare
+      Long_Document : Unbounded.Unbounded_String;
+      Short_Document : constant String :=
+        "<http://e/s> <http://e/p> <http://e/o> .";
+   begin
+      --  Four tokens to a statement, so this is comfortably more scan
+      --  units than one checkpoint interval.
+      for Count in 1 .. 5_000 loop
+         Unbounded.Append
+           (Long_Document, "<http://e/s> <http://e/p> <http://e/o> .");
+      end loop;
+
+      declare
+         Sink   : Collector;
+         Parser : Parsers.Parser :=
+           Parsers.Create
+             (Source_Name     => "test",
+              Work_Checkpoint => Checkpoint_Probe.Bump'Access);
+         Status : Parsers.Parse_Status;
+      begin
+         Checkpoint_Probe.Reset;
+         Parsers.Feed (Parser, Unbounded.To_String (Long_Document), Sink);
+         Status := Parsers.Finish (Parser, Sink);
+         Check (Status = Parsers.Parse_Succeeded,
+                "a document with a checkpoint parses");
+         Check (Checkpoint_Probe.Calls > 0,
+                "the checkpoint is called during a long parse");
+         Check (Parsers.Work (Parser).Checkpoint_Calls
+                = Parsers.Work_Count (Checkpoint_Probe.Calls),
+                "the reported count matches the calls actually made,"
+                & Parsers.Work_Count'Image
+                    (Parsers.Work (Parser).Checkpoint_Calls)
+                & " against" & Natural'Image (Checkpoint_Probe.Calls));
+
+         --  Calls are paced by the interval, so their number follows the
+         --  work done. Without that they could all arrive at the end and
+         --  the callback would be useless for yielding.
+         declare
+            Expected : constant Parsers.Work_Count :=
+              Parsers.Work (Parser).Tokens_Scanned
+              / Parsers.Work_Count (Parsers.Work_Checkpoint_Interval);
+         begin
+            Check (Parsers.Work (Parser).Checkpoint_Calls >= Expected - 1
+                   and then
+                   Parsers.Work (Parser).Checkpoint_Calls <= Expected + 1,
+                   "calls are paced by the interval, expected about"
+                   & Parsers.Work_Count'Image (Expected) & ", got"
+                   & Parsers.Work_Count'Image
+                       (Parsers.Work (Parser).Checkpoint_Calls));
+         end;
+      end;
+
+      --  A parse shorter than one interval must not call it at all.
+      declare
+         Sink   : Collector;
+         Parser : Parsers.Parser :=
+           Parsers.Create
+             (Source_Name     => "test",
+              Work_Checkpoint => Checkpoint_Probe.Bump'Access);
+      begin
+         Checkpoint_Probe.Reset;
+         Parsers.Feed (Parser, Short_Document, Sink);
+         Check (Parsers.Finish (Parser, Sink) = Parsers.Parse_Succeeded,
+                "the short document parses");
+         Check (Checkpoint_Probe.Calls = 0,
+                "a short parse reaches no checkpoint");
+      end;
+
+      --  No checkpoint means no counting, and no attempt to call null.
+      declare
+         Sink   : Collector;
+         Parser : Parsers.Parser := Parsers.Create (Source_Name => "test");
+         Status : Parsers.Parse_Status;
+      begin
+         Parsers.Feed (Parser, Unbounded.To_String (Long_Document), Sink);
+         Status := Parsers.Finish (Parser, Sink);
+         Check (Status = Parsers.Parse_Succeeded,
+                "a long document parses without a checkpoint");
+         Check (Parsers.Work (Parser).Checkpoint_Calls = 0,
+                "no checkpoint is counted when none was given");
+      end;
+
+      --  A checkpoint that refuses stops the parse. A caller cancels a
+      --  parse this way, so the exception must reach them rather than be
+      --  swallowed and the work continue.
+      declare
+         Sink   : Collector;
+         Parser : Parsers.Parser :=
+           Parsers.Create
+             (Source_Name     => "test",
+              Work_Checkpoint => Checkpoint_Probe.Bump'Access);
+      begin
+         Checkpoint_Probe.Reset;
+         Checkpoint_Probe.Fail := True;
+         begin
+            Parsers.Feed
+              (Parser, Unbounded.To_String (Long_Document), Sink);
+            Check (False, "a refusing checkpoint stops the parse");
+         exception
+            when Checkpoint_Probe.Refused =>
+               Check (True, "a refusing checkpoint stops the parse");
+         end;
+         Checkpoint_Probe.Fail := False;
+         Check (Parsers.Finish (Parser, Sink) = Parsers.Parse_Failed,
+                "and the parser stays failed afterwards");
+      end;
+   end;
 
    IO.Put_Line ("  checks              " & Checks'Image);
    IO.Put_Line ("  failures            " & Failures'Image);

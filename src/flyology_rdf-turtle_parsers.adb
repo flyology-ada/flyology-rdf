@@ -1470,9 +1470,10 @@ package body Flyology_RDF.Turtle_Parsers is
             --  to get there, and will walk them again next time.
             Into.Work_Data.Bytes_Scanned :=
               Into.Work_Data.Bytes_Scanned
-              + (if Status = Lexers.Needs_More_Input
-                 then Natural'Max (0, Text'Last - Walked_From + 1)
-                 else Index - Walked_From);
+              + Work_Count
+                  (if Status = Lexers.Needs_More_Input
+                   then Natural'Max (0, Text'Last - Walked_From + 1)
+                   else Index - Walked_From);
          end;
 
          if Into.Checkpoint /= null then
@@ -1501,8 +1502,8 @@ package body Flyology_RDF.Turtle_Parsers is
 
                Into.Statement.Append (Result);
                Into.Work_Data.Maximum_Pending_Tokens :=
-                 Natural'Max (Into.Work_Data.Maximum_Pending_Tokens,
-                              Natural (Into.Statement.Length));
+                 Work_Count'Max (Into.Work_Data.Maximum_Pending_Tokens,
+                                 Work_Count (Into.Statement.Length));
 
                declare
                   Complete : Boolean;
@@ -1570,8 +1571,8 @@ package body Flyology_RDF.Turtle_Parsers is
         (Text (Consumed_Index .. Text'Last));
       Into.Pending_Origin := Consumed_Position;
       Into.Work_Data.Maximum_Pending_Bytes :=
-        Natural'Max (Into.Work_Data.Maximum_Pending_Bytes,
-                     Unbounded.Length (Into.Pending));
+        Work_Count'Max (Into.Work_Data.Maximum_Pending_Bytes,
+                        Work_Count (Unbounded.Length (Into.Pending)));
    exception
       when others =>
          --  A sink callback raising must poison the parse, as the spec
@@ -1592,10 +1593,16 @@ package body Flyology_RDF.Turtle_Parsers is
          return;
       end if;
 
-      Into.Byte_Count := Into.Byte_Count + Bytes'Length;
-      Into.Work_Data.Bytes_Fed := Into.Work_Data.Bytes_Fed + Bytes'Length;
+      Into.Work_Data.Bytes_Fed :=
+        Into.Work_Data.Bytes_Fed + Work_Count (Bytes'Length);
 
-      if Into.Byte_Count > Into.Limits_Data.Maximum_Bytes then
+      --  Compare against the room left rather than adding first and
+      --  testing after. The sum overflows when the caller sets the limit
+      --  near the top of the range, and the subtraction cannot, because
+      --  Byte_Count never passes Maximum_Bytes: this test returns first.
+      if Bytes'Length
+         > Into.Limits_Data.Maximum_Bytes - Into.Byte_Count
+      then
          Into.Failed := True;
          On_Diagnostic
            (Target,
@@ -1605,6 +1612,8 @@ package body Flyology_RDF.Turtle_Parsers is
              Source_Value     => Into.Source_Data));
          return;
       end if;
+
+      Into.Byte_Count := Into.Byte_Count + Bytes'Length;
 
       Unbounded.Append (Into.Pending, Bytes);
       Deliver (Into, Target, Ended => False);

@@ -457,7 +457,7 @@ procedure Benchmarks is
          Done : constant Parsers.Work_Statistics := Parsers.Work (Parser);
       begin
          return Long_Float (Done.Bytes_Scanned)
-                / Long_Float (Natural'Max (1, Done.Bytes_Fed));
+                / Long_Float (Parsers.Work_Count'Max (1, Done.Bytes_Fed));
       end;
    end Scan_Ratio;
 

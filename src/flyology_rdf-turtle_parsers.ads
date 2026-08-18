@@ -259,14 +259,23 @@ package Flyology_RDF.Turtle_Parsers is
    --  @field Checkpoint_Calls Cooperative callbacks invoked
    --  @field Maximum_Pending_Bytes Largest retained partial token
    --  @field Maximum_Pending_Tokens Largest retained statement, in tokens
+   --  Counts are 64-bit rather than Natural. Bytes_Scanned is several
+   --  times Bytes_Fed, and Maximum_Bytes is the caller's to set, so a
+   --  caller who raises it can drive a 32-bit count past its range. A
+   --  statistic that ends a parse it was only observing is a poor trade,
+   --  and clamping is worse: the benchmark scaling check divides these,
+   --  so a clamped count would read as flat exactly where the input is
+   --  largest and the check matters most.
+   type Work_Count is range 0 .. 2 ** 63 - 1;
+
    type Work_Statistics is record
-      Bytes_Fed              : Natural := 0;
-      Bytes_Scanned          : Natural := 0;
-      Tokens_Scanned         : Natural := 0;
-      Statements_Parsed      : Natural := 0;
-      Checkpoint_Calls       : Natural := 0;
-      Maximum_Pending_Bytes  : Natural := 0;
-      Maximum_Pending_Tokens : Natural := 0;
+      Bytes_Fed              : Work_Count := 0;
+      Bytes_Scanned          : Work_Count := 0;
+      Tokens_Scanned         : Work_Count := 0;
+      Statements_Parsed      : Work_Count := 0;
+      Checkpoint_Calls       : Work_Count := 0;
+      Maximum_Pending_Bytes  : Work_Count := 0;
+      Maximum_Pending_Tokens : Work_Count := 0;
    end record;
 
    --  Report the work this parser has done.
