@@ -110,10 +110,13 @@ jobs:
       # was given the chance.
       - name: Report what was provisioned
         run: ./scripts/provision-oracles.sh verify
+      # "alr build" rather than "alr exec -- gprbuild": the dependencies
+      # have to be deployed before a project that imports them can be
+      # processed, and only the former does that.
       - name: Run the differential
         working-directory: tests
         run: |
-          alr exec -- gprbuild -P flyology_rdf_tests.gpr
+          alr -n build
           ./bin/oracle_differential
 
   benchmarks:
