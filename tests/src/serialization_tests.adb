@@ -140,8 +140,8 @@ begin
      (Writers.Write_Term
         (Terms.Literal ("a" & ASCII.HT & "b", I (XSD_String)),
          Writers.Implicit_Datatype),
-      """a\u0009b""",
-      "a tab becomes a numeric escape");
+      """a\tb""",
+      "a tab takes the short escape the canonical form names");
    Check_Equal
      (Writers.Write_Term
         (Terms.Literal ("a" & Character'Val (1) & "b", I (XSD_String)),

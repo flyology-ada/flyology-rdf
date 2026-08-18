@@ -30,10 +30,12 @@ package body Flyology_RDF.NQuads_Writers is
       Unbounded.Append (Buffer, Hex_Digits (Code mod 16 + 1));
    end Append_Escape_16;
 
-   --  Literal content. Only the four characters that would otherwise end or
-   --  reinterpret the literal are given short escapes; every other control
-   --  byte becomes a numeric escape, and all remaining UTF-8 passes through
-   --  unchanged so that the output stays valid UTF-8 rather than ASCII.
+   --  Literal content. The canonical form spells a control character with
+   --  a short escape wherever one exists, not only the characters that
+   --  would otherwise end or reinterpret the literal, so all seven are
+   --  listed here; every other control byte becomes a numeric escape,
+   --  and all remaining UTF-8 passes through unchanged so that the
+   --  output stays valid UTF-8 rather than ASCII.
    function Escape_Literal (Value : String) return String is
       Buffer : Unbounded.Unbounded_String;
    begin
@@ -43,6 +45,9 @@ package body Flyology_RDF.NQuads_Writers is
             when '\'      => Unbounded.Append (Buffer, "\\");
             when ASCII.LF => Unbounded.Append (Buffer, "\n");
             when ASCII.CR => Unbounded.Append (Buffer, "\r");
+            when ASCII.HT => Unbounded.Append (Buffer, "\t");
+            when ASCII.BS => Unbounded.Append (Buffer, "\b");
+            when ASCII.FF => Unbounded.Append (Buffer, "\f");
             when others =>
                declare
                   Code : constant Natural := Character'Pos (Item);

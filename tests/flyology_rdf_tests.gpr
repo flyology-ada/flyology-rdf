@@ -9,7 +9,8 @@ project Flyology_RDF_Tests is
      ("iri_strictness_gate.adb", "terms_tests.adb", "statement_tests.adb",
       "cursor_tests.adb", "lexer_tests.adb", "parser_tests.adb",
       "serialization_tests.adb", "roundtrip_tests.adb",
-      "canonicalization_tests.adb", "codec_tests.adb", "conformance.adb");
+      "canonicalization_tests.adb", "codec_tests.adb", "conformance.adb",
+      "canonicalization_conformance.adb");
    for Create_Missing_Dirs use "True";
 
    package Compiler is

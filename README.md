@@ -65,11 +65,15 @@ permanent IRI strictness gate, a 925-case differential establishing that the
 admission rule is never more permissive than the one it replaced and that
 every accepted IRI serialises back to its exact bytes.
 
-`./scripts/provision-oracles.sh` fetches the independent implementations the
-differential tests compare against, and the W3C corpora. Nothing is taken
-from the host: every artifact is pinned, verified, and installed under a
-gitignored directory, because a conformance number produced against an
-unrecorded version is not evidence.
+`./scripts/provision-oracles.sh corpora` fetches the W3C suites every
+harness reads. Nothing is taken from the host: every artifact is pinned,
+verified, and installed under a gitignored directory, because a conformance
+number produced against an unrecorded version is not evidence.
+
+The script also provisions three independent implementations -- Jena,
+oxigraph and ld-cli -- for differential checking by hand. **No test invokes
+them**: the numbers below come from the W3C suites alone, and the IRI
+strictness gate is a recorded table rather than a live comparison.
 
 ## Status
 
@@ -80,6 +84,7 @@ not a verdict:
 | Suite | Examined | Rejected valid | Accepted invalid | Wrong result |
 | --- | --- | --- | --- | --- |
 | RDF 1.1 and 1.2 | 1050 | **0** | **0** | **0** |
+| RDFC-1.0 canonicalization | 64 | — | — | **0** |
 | Notation3 syntax | 1070 | **0** | **0** | — |
 | SPARQL 1.1 syntax | 488 | **0** | **0** | — |
 
@@ -94,6 +99,11 @@ reversed. Eleven of them diverge, all cwm-era notation the specification
 did not keep -- `?x^^xsd:dateTime`, `?s@de`, an `id` outside a property
 list. The harness prints each one, marked `[withdrawn]`. No entry in the
 RDF or SPARQL suites carries that status.
+
+The canonicalization suite grades the canonical form byte for byte, because
+RDFC-1.0 fixes both the labels and their order. Twenty-one of its entries
+grade the issued-identifier map, which this crate does not expose, and one
+uses SHA-384, which it does not implement; both are counted as skipped.
 
 What cannot be graded is counted as skipped, not passed: 811 SPARQL
 evaluation entries need a query engine, 83 more are SPARQL Update rather
