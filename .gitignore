@@ -42,3 +42,4 @@ __pycache__/
 /tests/data/w3c-n3/
 /tests/data/w3c-sparql-tests
 /tests/data/w3c-n3-tests
+/build/site/

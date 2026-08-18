@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Flyology RDF is an RDF 1.2 library for Ada: streaming Turtle and TriG, N-Triples and N-Quads, Notation3, SPARQL syntax, and RDFC-1.0 canonicalization.">
+    <meta name="theme-color" content="#17213d">
+    <title>Flyology RDF · RDF 1.2 for Ada</title>
+    <link rel="canonical" href="https://rdf.flyology.org/">
+    <link rel="icon" href="assets/brand/flyology-primary-icon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="assets/styles/site.css">
+    <script src="assets/scripts/ada-highlight.js"></script>
+    <script src="assets/scripts/site.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <nav class="site-nav" aria-label="Primary navigation">
+        <a class="brand" href="./" aria-label="Flyology RDF home"><img src="assets/brand/flyology-mark-transparent.svg" alt=""><span>Flyology RDF</span></a>
+        <ul class="nav-links" data-nav-links>
+          <li><a href="./" aria-current="page">Overview</a></li>
+          <li><a href="guide/">Guide</a></li>
+          <li><a href="api/">API</a></li>
+          <li><a href="https://github.com/flyology-ada/flyology-rdf">GitHub</a></li><li><a href="https://flyology.org/">Flyology<svg class="external-link-icon" aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 2h5v5M8 8l6-6M12 9v3a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h3"/></svg><span class="visually-hidden"> (external site)</span></a></li>
+        </ul>
+        <div class="nav-tools"><button class="icon-button" type="button" data-theme-toggle><span class="visually-hidden" data-theme-label>Change theme</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.64 5.64 7.2 7.2M16.8 16.8l1.56 1.56M18.36 5.64 16.8 7.2M7.2 16.8l-1.56 1.56"/><circle cx="12" cy="12" r="4"/></svg></button><button class="menu-button" type="button" data-menu-toggle aria-expanded="false" aria-label="Toggle navigation"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button></div>
+      </nav>
+    </header>
+    <main id="main">
+      <section class="hero page-shell" aria-labelledby="hero-title">
+        <div>
+          <p class="eyebrow">RDF 1.2 for Ada</p>
+          <h1 id="hero-title">Read RDF without holding it all.</h1>
+          <p class="hero-lede">Turtle, TriG, N-Triples and N-Quads arrive as statements, not as a document in memory. Input may be split at any byte. Invalid terms are unrepresentable: a literal in predicate position is a compile error, not a runtime check.</p>
+          <div class="actions"><a class="button button-primary" href="guide/">Read the guide <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 10h11M11 6l4 4-4 4"/></svg></a><a class="button button-secondary" href="api/">API reference</a></div>
+        </div>
+        <div class="hero-visual">
+          <pre><code class="language-ada">Sink   : Collector;
+Parser : Turtle_Parsers.Parser :=
+  Turtle_Parsers.Create
+    (Source_Name => "example",
+     Base_IRI    => "http://example.org/",
+     Syntax      => Turtle_Parsers.Turtle_Syntax);
+begin
+   Turtle_Parsers.Feed (Parser, Chunk, Sink);
+   Status := Turtle_Parsers.Finish (Parser, Sink);</code></pre>
+        </div>
+      </section>
+
+      <section class="page-shell" aria-labelledby="measured-title">
+        <h2 id="measured-title">Conformance, measured rather than claimed</h2>
+        <p>Each harness reads the W3C manifests with this library's own Turtle parser and reports what it examined, not a verdict. Corpora are pinned by commit, because a conformance number produced against an unrecorded revision is not evidence.</p>
+        <table>
+          <thead><tr><th>Suite</th><th>Examined</th><th>Rejected valid</th><th>Accepted invalid</th><th>Wrong result</th></tr></thead>
+          <tbody>
+            <tr><td>RDF 1.1 and 1.2</td><td>1050</td><td><strong>0</strong></td><td><strong>0</strong></td><td><strong>0</strong></td></tr>
+            <tr><td>RDFC-1.0 canonicalization</td><td>86</td><td>&mdash;</td><td>&mdash;</td><td><strong>0</strong></td></tr>
+            <tr><td>Notation3 syntax</td><td>1070</td><td><strong>0</strong></td><td><strong>0</strong></td><td>&mdash;</td></tr>
+            <tr><td>SPARQL 1.1 syntax</td><td>488</td><td><strong>0</strong></td><td><strong>0</strong></td><td>&mdash;</td></tr>
+          </tbody>
+        </table>
+        <p>A differential asks two other implementations, oxigraph and Jena, the question the suites cannot: whether anybody else reads what this library writes. Across 2,443 documents there is no divergence either would not be able to name.</p>
+      </section>
+
+      <section class="page-shell" aria-labelledby="crates-title">
+        <h2 id="crates-title">Three crates</h2>
+        <p>They are separate because their models are, not merely because they are large.</p>
+        <table>
+          <thead><tr><th>Crate</th><th>What it is</th></tr></thead>
+          <tbody>
+            <tr><td><code>flyology_rdf</code></td><td>The RDF 1.2 model and its serializations</td></tr>
+            <tr><td><code>flyology_n3</code></td><td>Notation3, whose formulas and variables RDF cannot express</td></tr>
+            <tr><td><code>flyology_sparql</code></td><td>SPARQL 1.1 queries, which are documents rather than data</td></tr>
+          </tbody>
+        </table>
+      </section>
+    </main>
+    <footer class="site-footer">
+      <div class="page-shell">
+        <p>Flyology RDF is experimental. Interfaces, diagnostics and the binary term format may change before <code>v0.1.0</code>.</p>
+        <p><a href="https://github.com/flyology-ada/flyology-rdf">Source on GitHub</a> · MIT OR Apache-2.0</p>
+      </div>
+    </footer>
+  </body>
+</html>

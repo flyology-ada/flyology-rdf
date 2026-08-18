@@ -1,0 +1,74 @@
+# THIS FILE IS GENERATED. DO NOT EDIT.
+
+[solution]
+[solution.context]
+solved = true
+[[solution.state]]
+crate = "flyology_iri"
+fulfilment = "solved"
+pinned = false
+transitivity = "indirect"
+versions = ">=0.1.1-dev & <0.2.0"
+[solution.state.release]
+authors = [
+"Yurii Rashkovskii",
+]
+description = "Allocation-conscious URI, IRI, and URL reference parser"
+licenses = "MIT OR Apache-2.0"
+maintainers = [
+"Yurii Rashkovskii <yrashk@gmail.com>",
+]
+maintainers-logins = [
+"yrashk",
+]
+name = "flyology_iri"
+project-files = [
+"flyology_iri.gpr",
+]
+tags = [
+"ada",
+"uri",
+"iri",
+"url",
+"parser",
+]
+version = "0.1.1-dev"
+website = "https://http.flyology.org/guide/iri/"
+[solution.state.release.origin]
+commit = "ddbba90dba757971afb2d5fda35e884ee3813fc2"
+subdir = "flyology_iri"
+url = "git+https://github.com/flyology-ada/flyology-http.git"
+[[solution.state.release.actions]]
+command = [
+"./scripts/test.sh",
+]
+directory = "."
+type = "test"
+[[solution.state]]
+crate = "flyology_n3"
+fulfilment = "linked"
+pinned = false
+transitivity = "direct"
+versions = "*"
+[solution.state.link]
+lockfiled = true
+path = "../n3"
+[[solution.state]]
+crate = "flyology_rdf"
+fulfilment = "linked"
+pinned = false
+transitivity = "direct"
+versions = "*"
+[solution.state.link]
+lockfiled = true
+path = ".."
+[[solution.state]]
+crate = "flyology_sparql"
+fulfilment = "linked"
+pinned = false
+transitivity = "direct"
+versions = "*"
+[solution.state.link]
+lockfiled = true
+path = "../sparql"
+

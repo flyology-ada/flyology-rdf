@@ -1,0 +1,34 @@
+# Flyology RDF
+
+> RDF 1.2 for Ada: streaming Turtle and TriG parsing, N-Triples and N-Quads,
+> Notation3, SPARQL 1.1 query syntax, RDFC-1.0 dataset canonicalization, and a
+> compact binary term encoding. No runtime dependency and no tasking.
+
+Three crates: flyology_rdf (the RDF 1.2 model and its serializations),
+flyology_n3 (Notation3, whose formulas and variables RDF cannot express), and
+flyology_sparql (SPARQL 1.1 queries, parsed and serialized, never evaluated).
+
+Design commitments that distinguish it:
+
+- Invalid terms are unrepresentable. A predicate is typed as an IRI, so a
+  literal in predicate position is a compile error rather than a runtime check.
+- Terms are a flat vector with index references, not a pointer graph, so no
+  cycle is representable and traversal is iterative and bounded.
+- One scanner serves three dialects, so token boundaries are decided in
+  exactly one place.
+- Parsing is chunk-fed. Input may be split at any byte boundary, including
+  mid-escape and mid-literal, and the result does not depend on where.
+- Failures are typed: a code, the grammar production, and a source span with
+  byte, line and column at both ends.
+
+Conformance is measured rather than claimed. Harnesses read the W3C manifests
+with the library's own parser and report what they examined: RDF 1.1 and 1.2
+(1050 entries), RDFC-1.0 (86), Notation3 (1070 entries the working group
+stands behind), SPARQL 1.1 syntax (488). Zero divergences in each. A
+differential additionally compares against oxigraph and Jena across 2,443
+documents, asking whether another implementation reads what this one writes.
+
+- [Overview](https://rdf.flyology.org/)
+- [Guide](https://rdf.flyology.org/guide/)
+- [API reference](https://rdf.flyology.org/api/)
+- [Source](https://github.com/flyology-ada/flyology-rdf)

@@ -53,9 +53,11 @@ package Flyology_RDF.Terms is
    Maximum_Payload_Bytes : constant Positive := 16 * 1_024 * 1_024;
 
    --  The datatype of a plain string literal.
+   --  @return xsd:string
    function String_Datatype return IRIs.IRI;
 
    --  The datatype every language-tagged literal carries.
+   --  @return rdf:langString
    function Language_String_Datatype return IRIs.IRI;
 
    --  An immutable RDF term.

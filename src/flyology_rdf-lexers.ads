@@ -43,8 +43,8 @@ package Flyology_RDF.Lexers is
 
       --  Structure
       Dot_Token,
-      Semicolon_Token,
-      Comma_Token,
+      Semicolon_Token,          --  ; -- another predicate, same subject
+      Comma_Token,              --  , -- another object, same predicate
       Open_Paren_Token,         --  (
       Close_Paren_Token,        --  )
       Open_Bracket_Token,       --  [
@@ -99,11 +99,15 @@ package Flyology_RDF.Lexers is
    type Dialect_Kind is (RDF_Dialect, N3_Dialect, SPARQL_Dialect);
 
    --  Direction carried by a Direction_Token.
+   --  @enum Left_To_Right The "ltr" base direction
+   --  @enum Right_To_Left The "rtl" base direction
    type Direction_Value is (Left_To_Right, Right_To_Left);
 
    --  Which quoting form a String_Token was written with. The grammar needs
    --  this only to reject a long-quoted string where a short one is
    --  required; the value is identical either way.
+   --  @enum Short_Quoted Written with one quote character at each end
+   --  @enum Long_Quoted Written with three
    type String_Form is (Short_Quoted, Long_Quoted);
 
    --  Outcome of one scan attempt.
@@ -116,6 +120,14 @@ package Flyology_RDF.Lexers is
      (Token_Found, Needs_More_Input, End_Of_Input, Scan_Error);
 
    --  Why a scan failed.
+   --  @enum No_Error The scan did not fail
+   --  @enum Invalid_Encoding The bytes are not canonical UTF-8
+   --  @enum Unterminated_Token Input ended inside a token
+   --  @enum Malformed_Escape An escape sequence that does not decode
+   --  @enum Malformed_Number A numeric literal the grammar does not admit
+   --  @enum Malformed_Language_Tag A language tag that is not well formed
+   --  @enum Forbidden_Character A raw control byte where none may appear
+   --  @enum Unexpected_Character A character no token may begin or continue
    type Scan_Error_Kind is
      (No_Error,
       Invalid_Encoding,        --  not canonical UTF-8

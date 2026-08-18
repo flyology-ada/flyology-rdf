@@ -1,0 +1,30 @@
+[GENERATED OBJECT FILE]
+b__examples.o
+[PROJECT FILES]
+/Users/yrashk/Projects/flyology-ada/flyology-rdf/examples/flyology_rdf_examples.gpr
+20260818095113 daa2b6f5760352d0dd3f03756cd1e3ee
+/Users/yrashk/Projects/flyology-ada/flyology-rdf/sparql/flyology_sparql.gpr
+20260817222036 808d113b83063e5fb8f3cd9675f82f01
+/Users/yrashk/Projects/flyology-ada/flyology-rdf/n3/flyology_n3.gpr
+20260817221110 1e86e4aa1db3254e25f25fcfc8ad2e99
+/Users/yrashk/.local/share/alire/builds/flyology_http_ddbba90d/d8b85050a13bfb5066e845e574971f1361446e8531cc5a134bec32f900a752dc/flyology_iri/flyology_iri.gpr
+20260817203055 98f5843f4ad3d8df94808a3908fd6798
+/Users/yrashk/Projects/flyology-ada/flyology-rdf/flyology_rdf.gpr
+20260817202439 f3ffd50db5ea7b38457084649752a10c
+[BOUND OBJECT FILES]
+/Users/yrashk/Projects/flyology-ada/flyology-rdf/examples/obj/examples.o
+[GENERATED SOURCE FILES]
+b__examples.ads
+b__examples.adb
+b__examples.ali
+[RESULTING OPTIONS]
+-L/Users/yrashk/Projects/flyology-ada/flyology-rdf/examples/obj/
+-L/Users/yrashk/Projects/flyology-ada/flyology-rdf/examples/obj/
+-L/Users/yrashk/Projects/flyology-ada/flyology-rdf/lib/
+-L/Users/yrashk/.local/share/alire/builds/flyology_http_ddbba90d/d8b85050a13bfb5066e845e574971f1361446e8531cc5a134bec32f900a752dc/flyology_iri/lib/
+-L/Users/yrashk/Projects/flyology-ada/flyology-rdf/n3/lib/
+-L/Users/yrashk/Projects/flyology-ada/flyology-rdf/sparql/lib/
+-L/users/yrashk/.local/share/alire/toolchains/gnat_native_16.1.0_657cf254/lib/gcc/aarch64-apple-darwin24.6.0/16.1.0/adalib/
+-static
+/users/yrashk/.local/share/alire/toolchains/gnat_native_16.1.0_657cf254/lib/gcc/aarch64-apple-darwin24.6.0/16.1.0/adalib/libgnarl.a
+/users/yrashk/.local/share/alire/toolchains/gnat_native_16.1.0_657cf254/lib/gcc/aarch64-apple-darwin24.6.0/16.1.0/adalib/libgnat.a

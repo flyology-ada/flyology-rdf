@@ -31,7 +31,11 @@ package Flyology_RDF.Canonicalization is
    --  SHA-384, and the labels a processor issues differ between them, so
    --  this is part of the request rather than a tuning knob.
    subtype Hash_Algorithm is Digests.Hash_Algorithm;
+
+   --  The digest RDFC-1.0 names.
    SHA_256 : constant Hash_Algorithm := Digests.SHA_256;
+
+   --  The one alternative it admits.
    SHA_384 : constant Hash_Algorithm := Digests.SHA_384;
 
    --  The canonical identifier issued to each blank node, keyed by the
@@ -54,6 +58,7 @@ package Flyology_RDF.Canonicalization is
    --  @param Output Canonical N-Quads, meaningful only when Canonicalized
    --  @param Status Whether canonicalization completed
    --  @param Maximum_Work Bound on permutation and recursion work
+   --  @param Algorithm Which digest to canonicalize with
    procedure Canonicalize
      (Value        : Datasets.Dataset;
       Output       : out Ada.Strings.Unbounded.Unbounded_String;
@@ -83,6 +88,7 @@ package Flyology_RDF.Canonicalization is
    --  from the graph rather than from the input.
    --  @param Value Dataset to canonicalize
    --  @param Maximum_Work Bound on permutation and recursion work
+   --  @param Algorithm Which digest to canonicalize with
    --  @return The canonical N-Quads serialization
    --  @exception Work_Limit_Error The bound was reached
    function To_Canonical_NQuads
@@ -98,6 +104,7 @@ package Flyology_RDF.Canonicalization is
    --  @param Left First dataset
    --  @param Right Second dataset
    --  @param Maximum_Work Bound applied to each canonicalization
+   --  @param Algorithm Which digest to canonicalize with
    --  @return True when the two canonicalize identically
    --  @exception Work_Limit_Error The bound was reached
    function Is_Isomorphic

@@ -60,6 +60,12 @@ jobs:
       - name: Run the SPARQL suite
         working-directory: sparql
         run: ./scripts/test.sh
+      # The README shows these, so they are compiled and run rather than
+      # trusted. A documented example nothing builds stops being true
+      # without anyone noticing.
+      - name: Run the examples
+        working-directory: examples
+        run: alr -n run
 
   differential:
     name: Oracle differential

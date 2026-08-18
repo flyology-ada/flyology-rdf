@@ -37,6 +37,7 @@ package Flyology_RDF.Parser_Cursors with SPARK_Mode is
    --  Largest scalar value Unicode defines.
    Maximum_Scalar : constant := 16#10FFFF#;
 
+   --  One Unicode scalar value, which is what a decode yields.
    subtype Scalar_Value is Natural range 0 .. Maximum_Scalar;
 
    --  Decode the scalar beginning at Text (Index).

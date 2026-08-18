@@ -58,6 +58,12 @@ package Flyology_RDF.Turtle_Parsers is
 
    --  A region of the input, given at both ends so that a caller can
    --  underline it without rescanning.
+   --  @field Start_Byte Offset of the first byte, zero when unset
+   --  @field End_Byte Offset one past the last byte
+   --  @field Start_Line Line the region opens on, counting from one
+   --  @field Start_Column Column the region opens on, counting from one
+   --  @field End_Line Line the region closes on
+   --  @field End_Column Column the region closes on
    type Source_Span is record
       Start_Byte   : Natural  := 0;
       End_Byte     : Natural  := 0;
@@ -91,6 +97,19 @@ package Flyology_RDF.Turtle_Parsers is
       Unsupported_Production);
 
    --  Which part of the grammar was being read.
+   --  @enum Document_Production The document as a whole
+   --  @enum Directive_Production A prefix, base or version directive
+   --  @enum Graph_Block_Production A TriG graph block
+   --  @enum Statement_Production One statement
+   --  @enum Subject_Production The subject position
+   --  @enum Predicate_Production The predicate position
+   --  @enum Object_Production The object position
+   --  @enum IRI_Production An IRI, absolute or relative
+   --  @enum Blank_Label_Production A blank node label
+   --  @enum Literal_Production A literal and its datatype or tag
+   --  @enum Collection_Production A parenthesised collection
+   --  @enum Triple_Term_Production An RDF 1.2 triple term
+   --  @enum Annotation_Production An RDF 1.2 annotation or reifier
    type Production_Kind is
      (Document_Production,
       Directive_Production,
@@ -158,6 +177,8 @@ package Flyology_RDF.Turtle_Parsers is
       Value  : Parse_Diagnostic) is abstract;
 
    --  Outcome of a completed parse.
+   --  @enum Parse_Succeeded Every statement was read and delivered
+   --  @enum Parse_Failed A diagnostic was delivered and reading stopped
    type Parse_Status is (Parse_Succeeded, Parse_Failed);
 
    --  Raised when a parser is used after it has finished or failed.

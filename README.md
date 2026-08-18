@@ -1,16 +1,14 @@
-# flyology_rdf
+# Flyology RDF
+
+<p align="center">
+  <a href="https://github.com/flyology-ada/flyology-rdf/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/flyology-ada/flyology-rdf/actions/workflows/ci.yml/badge.svg"></a>
+</p>
 
 RDF 1.2 for Ada: terms, streaming Turtle and TriG parsing, N-Triples and
-N-Quads, dataset canonicalization, and a compact binary encoding.
+N-Quads, Notation3, SPARQL 1.1 query syntax, dataset canonicalization, and a
+compact binary encoding.
 
-The repository holds three crates. They are separate because their models
-are, not merely because they are large:
-
-| Crate | What it is |
-| --- | --- |
-| `flyology_rdf` | The RDF 1.2 model and its serializations |
-| `flyology_n3` | Notation3, whose formulas and variables RDF cannot express |
-| `flyology_sparql` | SPARQL 1.1 queries, which are documents rather than data |
+Documentation is published at [rdf.flyology.org](https://rdf.flyology.org/).
 
 `flyology_rdf` has no runtime dependency and no tasking. Its only concession
 to a scheduler is an optional cooperative-yield callback, so it runs equally
@@ -19,6 +17,132 @@ well in a plain sequential program and inside a lightweight-task runtime.
 > **Experimental.** Interfaces, diagnostics, and the binary term format are
 > subject to change until `v0.1.0`, and the binary format remains explicitly
 > unstable after it.
+
+## Reading a document
+
+A sink receives one event per statement as the parser reads it. Nothing is
+retained that the sink does not retain, which is what lets a document larger
+than memory be read.
+
+```ada
+type Collector is limited new Turtle_Parsers.Event_Sink with record
+   Data : Datasets.Dataset := Datasets.Empty;
+end record;
+
+overriding procedure On_Quad
+  (Target : in out Collector;
+   Value  : Quads.Quad;
+   Span   : Turtle_Parsers.Source_Span)
+is
+begin
+   Datasets.Insert (Target.Data, Value);
+end On_Quad;
+
+Sink   : Collector;
+Parser : Turtle_Parsers.Parser :=
+  Turtle_Parsers.Create
+    (Source_Name => "example",
+     Base_IRI    => "http://example.org/",
+     Syntax      => Turtle_Parsers.Turtle_Syntax);
+begin
+   Turtle_Parsers.Feed (Parser, Document, Sink);
+   if Turtle_Parsers.Finish (Parser, Sink)
+      = Turtle_Parsers.Parse_Succeeded
+   then
+      ...
+```
+
+Input may arrive in pieces. The split may fall anywhere, including inside an
+escape or a literal, and what comes out does not depend on where it fell:
+
+```ada
+for Index in Document'Range loop
+   Turtle_Parsers.Feed (Parser, Document (Index .. Index), Sink);
+end loop;
+```
+
+## Building statements
+
+A predicate is typed as an IRI rather than a term, so a literal in predicate
+position is a compile error rather than a runtime check:
+
+```ada
+Datasets.Insert
+  (Data,
+   Quads.Create
+     (Graph     => Quads.Default_Graph,
+      Subject   => Terms.IRI_Term (I ("http://example.org/ada")),
+      Predicate => I ("http://example.org/wrote"),
+      Object    => Terms.Language_Literal ("notes", "en")));
+```
+
+## Writing
+
+```ada
+Bind (Prefixes, "", "http://example.org/");
+Put (Turtle_Writers.To_Turtle (Data, Prefixes));
+```
+
+```turtle
+@prefix : <http://example.org/> .
+
+:ada :born "1815-12-10" ;
+    :wrote :notes .
+
+:notes :about "flight"@en .
+```
+
+## Deciding whether two graphs say the same thing
+
+Two documents that differ only in their blank node labels denote the same
+thing, and comparing their text will not tell you so:
+
+```ada
+Is_Isomorphic (Left, Right)   --  TRUE
+Put (To_Canonical_NQuads (Left));
+```
+
+```nquads
+_:c14n0 <http://example.org/q> "x" .
+_:c14n1 <http://example.org/p> _:c14n0 .
+```
+
+## Notation3 and SPARQL
+
+Notation3 says things RDF cannot -- a formula is a term, so a rule is a
+statement about two graphs:
+
+```ada
+Parsed : constant Model.Term :=
+  N3_Parsers.Parse ("{ ?who :wrote ?what } => { ?what :by ?who } .", Base);
+```
+
+SPARQL queries are read and written back as documents. There is no
+evaluation: a query here is something to check, format or inspect.
+
+```ada
+Parsed : constant Syntax.Query := SPARQL_Parsers.Parse (Query);
+Put (SPARQL_Writers.To_SPARQL (Parsed));
+```
+
+Every snippet above is taken from [`examples/src/examples.adb`](examples/src/examples.adb),
+which is compiled and run by CI. A documented example that nothing builds
+stops being true without anyone noticing.
+
+```sh
+cd examples && alr run
+```
+
+## The three crates
+
+They are separate because their models are, not merely because they are
+large:
+
+| Crate | What it is |
+| --- | --- |
+| `flyology_rdf` | The RDF 1.2 model and its serializations |
+| `flyology_n3` | Notation3, whose formulas and variables RDF cannot express |
+| `flyology_sparql` | SPARQL 1.1 queries, which are documents rather than data |
 
 ## Design
 
@@ -65,7 +189,7 @@ reasoning of any kind.
 
 ## Testing
 
-`./scripts/test.sh` in each crate. The RDF suite additionally holds a
+`./scripts/test.sh` in each crate, and `cd examples && alr run`. The RDF suite additionally holds a
 permanent IRI strictness gate, a 925-case differential establishing that the
 admission rule is never more permissive than the one it replaced and that
 every accepted IRI serialises back to its exact bytes.

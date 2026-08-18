@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="How to read, build, write, compare and canonicalize RDF with Flyology RDF, and how to read Notation3 and SPARQL.">
+    <meta name="theme-color" content="#17213d">
+    <title>Guide · Flyology RDF</title>
+    <link rel="canonical" href="https://rdf.flyology.org/guide/">
+    <link rel="icon" href="../assets/brand/flyology-primary-icon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="../assets/styles/site.css">
+    <script src="../assets/scripts/ada-highlight.js"></script>
+    <script src="../assets/scripts/site.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <nav class="site-nav" aria-label="Primary navigation">
+        <a class="brand" href="../" aria-label="Flyology RDF home"><img src="../assets/brand/flyology-mark-transparent.svg" alt=""><span>Flyology RDF</span></a>
+        <ul class="nav-links" data-nav-links>
+          <li><a href="../">Overview</a></li>
+          <li><a href="./" aria-current="page">Guide</a></li>
+          <li><a href="../api/">API</a></li>
+          <li><a href="https://github.com/flyology-ada/flyology-rdf">GitHub</a></li><li><a href="https://flyology.org/">Flyology<svg class="external-link-icon" aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 2h5v5M8 8l6-6M12 9v3a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h3"/></svg><span class="visually-hidden"> (external site)</span></a></li>
+        </ul>
+        <div class="nav-tools"><button class="icon-button" type="button" data-theme-toggle><span class="visually-hidden" data-theme-label>Change theme</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.64 5.64 7.2 7.2M16.8 16.8l1.56 1.56M18.36 5.64 16.8 7.2M7.2 16.8l-1.56 1.56"/><circle cx="12" cy="12" r="4"/></svg></button><button class="menu-button" type="button" data-menu-toggle aria-expanded="false" aria-label="Toggle navigation"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button></div>
+      </nav>
+    </header>
+    <main id="main">
+      <section class="page-shell">
+        <p class="eyebrow">Guide</p>
+        <h1>Reading, writing and comparing RDF</h1>
+        <p class="hero-lede">Every example on this page is taken from <code>examples/src/examples.adb</code>, which is compiled and run by CI. An example that nothing builds stops being true without anyone noticing.</p>
+
+        <h2 id="install">Install</h2>
+        <pre><code class="language-toml">[[depends-on]]
+flyology_rdf = "*"</code></pre>
+        <p>The Notation3 and SPARQL crates are separate dependencies, <code>flyology_n3</code> and <code>flyology_sparql</code>. The library has no runtime dependency and no tasking.</p>
+
+        <h2 id="reading">Reading a document</h2>
+        <p>A sink receives one event per statement as the parser reads it. Nothing is retained that the sink does not retain, which is what lets a document larger than memory be read.</p>
+        <pre><code class="language-ada">type Collector is limited new Turtle_Parsers.Event_Sink with record
+   Data : Datasets.Dataset := Datasets.Empty;
+end record;
+
+overriding procedure On_Quad
+  (Target : in out Collector;
+   Value  : Quads.Quad;
+   Span   : Turtle_Parsers.Source_Span)
+is
+begin
+   Datasets.Insert (Target.Data, Value);
+end On_Quad;</code></pre>
+        <p>Four syntaxes share the parser, chosen at <code>Create</code>: <code>Turtle_Syntax</code>, <code>TriG_Syntax</code>, <code>NTriples_Syntax</code> and <code>NQuads_Syntax</code>.</p>
+
+        <h2 id="chunks">Input that arrives in pieces</h2>
+        <p>The split may fall anywhere, including inside an escape or a literal, and what comes out does not depend on where it fell. Every document in the test suite is parsed twice, whole and one byte at a time, and the two must agree.</p>
+        <pre><code class="language-ada">for Index in Document'Range loop
+   Turtle_Parsers.Feed (Parser, Document (Index .. Index), Sink);
+end loop;</code></pre>
+        <p>Notation3 and SPARQL take chunks too. They emit nothing as they read, because a formula and a query are terms and a term means nothing until it is closed; what chunking buys there is the scanner.</p>
+
+        <h2 id="building">Building statements</h2>
+        <p>A predicate is typed as an IRI rather than a term, so a literal in predicate position is a compile error rather than a runtime check.</p>
+        <pre><code class="language-ada">Datasets.Insert
+  (Data,
+   Quads.Create
+     (Graph     => Quads.Default_Graph,
+      Subject   => Terms.IRI_Term (I ("http://example.org/ada")),
+      Predicate => I ("http://example.org/wrote"),
+      Object    => Terms.Language_Literal ("notes", "en")));</code></pre>
+
+        <h2 id="writing">Writing</h2>
+        <pre><code class="language-ada">Bind (Prefixes, "", "http://example.org/");
+Put (Turtle_Writers.To_Turtle (Data, Prefixes));</code></pre>
+        <pre><code>@prefix : &lt;http://example.org/&gt; .
+
+:ada :born "1815-12-10" ;
+    :wrote :notes .
+
+:notes :about "flight"@en .</code></pre>
+
+        <h2 id="comparing">Deciding whether two graphs say the same thing</h2>
+        <p>Two documents that differ only in their blank node labels denote the same thing, and comparing their text will not tell you so. Canonicalization decides it: every blank node is labelled from its position in the graph rather than from what it was called.</p>
+        <pre><code class="language-ada">Is_Isomorphic (Left, Right)   --  TRUE
+Put (To_Canonical_NQuads (Left));</code></pre>
+        <pre><code>_:c14n0 &lt;http://example.org/q&gt; "x" .
+_:c14n1 &lt;http://example.org/p&gt; _:c14n0 .</code></pre>
+        <p>The algorithm has a documented adversarial case, so it takes a work bound and reports reaching it as a result rather than running until something else gives out. RDFC-1.0 admits SHA-256 and SHA-384; the digest is part of the request, because the identifiers a processor issues differ between them.</p>
+
+        <h2 id="n3">Notation3</h2>
+        <p>N3 says things RDF cannot. A formula is a term, so a rule is a statement about two graphs.</p>
+        <pre><code class="language-ada">Parsed : constant Model.Term :=
+  N3_Parsers.Parse ("{ ?who :wrote ?what } => { ?what :by ?who } .", Base);</code></pre>
+
+        <h2 id="sparql">SPARQL</h2>
+        <p>Queries are read and written back as documents. There is no evaluation: a query here is something to check, format or inspect.</p>
+        <pre><code class="language-ada">Parsed : constant Syntax.Query := SPARQL_Parsers.Parse (Query);
+Put (SPARQL_Writers.To_SPARQL (Parsed));</code></pre>
+
+        <h2 id="failure">When a document is malformed</h2>
+        <p>Failures are typed. A diagnostic carries a code, the grammar production that failed, and a full source span with byte, line and column at both ends &mdash; not a message string.</p>
+        <pre><code class="language-ada">Status := Turtle_Parsers.Finish (Parser, Sink);
+--  Parse_Failed, with the diagnostic already delivered to the sink</code></pre>
+      </section>
+    </main>
+    <footer class="site-footer">
+      <div class="page-shell">
+        <p><a href="https://github.com/flyology-ada/flyology-rdf">Source on GitHub</a> · MIT OR Apache-2.0</p>
+      </div>
+    </footer>
+  </body>
+</html>
