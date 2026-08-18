@@ -3,9 +3,9 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="Flyology RDF is an RDF 1.2 library for Ada: streaming Turtle and TriG, N-Triples and N-Quads, Notation3, SPARQL syntax, and RDFC-1.0 canonicalization.">
+    <meta name="description" content="Flyology RDF is a set of Ada libraries for RDF 1.2, Notation3 and SPARQL 1.1 syntax, with streaming parsers, dataset canonicalization and measured conformance.">
     <meta name="theme-color" content="#17213d">
-    <title>Flyology RDF · RDF 1.2 for Ada</title>
+    <title>Flyology RDF · RDF, Notation3 and SPARQL for Ada</title>
     <link rel="canonical" href="https://rdf.flyology.org/">
     <link rel="icon" href="assets/brand/flyology-primary-icon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="assets/styles/site.css">
@@ -30,56 +30,85 @@
       <section class="hero page-shell" aria-labelledby="hero-title">
         <div>
           <p class="eyebrow">RDF 1.2 for Ada</p>
-          <h1 id="hero-title">Read RDF without holding it all.</h1>
-          <p class="hero-lede">Turtle, TriG, N-Triples and N-Quads arrive as statements, not as a document in memory. Input may be split at any byte. Invalid terms are unrepresentable: a literal in predicate position is a compile error, not a runtime check.</p>
+          <h1 id="hero-title">RDF, Notation3 and SPARQL libraries.</h1>
+          <p class="hero-lede">Turtle, TriG, N-Triples and N-Quads arrive as statements rather than as a document in memory, and input may be split at any byte. Notation3 and SPARQL are separate crates because their models are separate.</p>
           <div class="actions"><a class="button button-primary" href="guide/">Read the guide <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 10h11M11 6l4 4-4 4"/></svg></a><a class="button button-secondary" href="api/">API reference</a></div>
         </div>
-        <div class="hero-visual">
-          <pre><code class="language-ada">Sink   : Collector;
-Parser : Turtle_Parsers.Parser :=
-  Turtle_Parsers.Create
-    (Source_Name => "example",
-     Base_IRI    => "http://example.org/",
-     Syntax      => Turtle_Parsers.Turtle_Syntax);
-begin
-   Turtle_Parsers.Feed (Parser, Chunk, Sink);
-   Status := Turtle_Parsers.Finish (Parser, Sink);</code></pre>
+        <div class="hero-visual" data-code-preview aria-label="Switch between the RDF, Notation3 and SPARQL crates">
+          <div class="orbit" aria-hidden="true">
+            <div class="orbit-ring"></div>
+            <img class="orbit-mark" src="assets/brand/flyology-mark-transparent.svg" alt="">
+          </div>
+          <div class="model-switcher" role="group" aria-label="Preview a Flyology RDF crate">
+            <button class="model-note model-note-light" type="button" data-preview-sample="rdf" data-preview-file="read_turtle.adb" aria-pressed="true" aria-controls="hero-code-preview">
+              <strong>flyology_rdf</strong>
+              <span class="model-direction">Read · write · canonicalize</span>
+              Statements arrive as they close, from input split anywhere.
+            </button>
+            <button class="model-note model-note-native" type="button" data-preview-sample="n3" data-preview-file="read_n3.adb" aria-pressed="false" aria-controls="hero-code-preview">
+              <strong>flyology_n3</strong>
+              <span class="model-direction">Formulas · variables · paths</span>
+              A formula is a term, so a rule is a statement about two graphs.
+            </button>
+            <button class="model-note model-note-light" type="button" data-preview-sample="sparql" data-preview-file="read_query.adb" aria-pressed="false" aria-controls="hero-code-preview">
+              <strong>flyology_sparql</strong>
+              <span class="model-direction">Parse · inspect · serialize</span>
+              A query is a document to check or format, never evaluated.
+            </button>
+          </div>
+          <div class="code-window" id="hero-code-preview">
+            <div class="code-titlebar">
+              <div class="window-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+              <span data-preview-filename aria-live="polite">read_turtle.adb</span>
+            </div>
+            <pre class="hero-code-sample" data-preview-code="rdf"><code class="language-ada">Turtle_Parsers.Feed (Parser, Chunk, Sink);
+Status := Turtle_Parsers.Finish (Parser, Sink);
+
+--  On_Quad ran once per statement.
+Put (To_Canonical_NQuads (Sink.Data));</code></pre>
+            <pre class="hero-code-sample" data-preview-code="n3" hidden><code class="language-ada">Rule : constant Model.Term :=
+  N3_Parsers.Parse
+    ("{ ?who :wrote ?what } =&gt; "
+     &amp; "{ ?what :by ?who } .", Base);</code></pre>
+            <pre class="hero-code-sample" data-preview-code="sparql" hidden><code class="language-ada">Query : constant Syntax.Query :=
+  SPARQL_Parsers.Parse (Text);
+
+Put (SPARQL_Writers.To_SPARQL (Query));</code></pre>
+          </div>
         </div>
       </section>
 
-      <section class="page-shell" aria-labelledby="measured-title">
-        <h2 id="measured-title">Conformance, measured rather than claimed</h2>
-        <p>Each harness reads the W3C manifests with this library's own Turtle parser and reports what it examined, not a verdict. Corpora are pinned by commit, because a conformance number produced against an unrecorded revision is not evidence.</p>
-        <table>
-          <thead><tr><th>Suite</th><th>Examined</th><th>Rejected valid</th><th>Accepted invalid</th><th>Wrong result</th></tr></thead>
-          <tbody>
-            <tr><td>RDF 1.1 and 1.2</td><td>1050</td><td><strong>0</strong></td><td><strong>0</strong></td><td><strong>0</strong></td></tr>
-            <tr><td>RDFC-1.0 canonicalization</td><td>86</td><td>&mdash;</td><td>&mdash;</td><td><strong>0</strong></td></tr>
-            <tr><td>Notation3 syntax</td><td>1070</td><td><strong>0</strong></td><td><strong>0</strong></td><td>&mdash;</td></tr>
-            <tr><td>SPARQL 1.1 syntax</td><td>488</td><td><strong>0</strong></td><td><strong>0</strong></td><td>&mdash;</td></tr>
-          </tbody>
-        </table>
-        <p>A differential asks two other implementations, oxigraph and Jena, the question the suites cannot: whether anybody else reads what this library writes. Across 2,443 documents there is no divergence either would not be able to name.</p>
+      <div class="status-strip" aria-label="Flyology RDF properties"><div class="status-inner"><div class="status-item"><strong>Invalid terms are unrepresentable</strong>A predicate is typed as an IRI, so a literal in predicate position is a compile error.</div><div class="status-item"><strong>Parsing is chunk-fed</strong>Input may be split mid-escape or mid-literal and the result does not depend on where.</div><div class="status-item"><strong>Failures are typed</strong>A code, the grammar production, and a span with byte, line and column at both ends.</div></div></div>
+
+      <section class="section page-shell" aria-labelledby="crates-title">
+        <div class="section-heading"><div><p class="eyebrow">Three crates</p><h2 id="crates-title">They are separate because their models are.</h2></div><p>Not merely because they are large. A formula is a term N3 can nest and RDF cannot express; a query is a document rather than data.</p></div>
+        <div class="lane-stage">
+          <div class="lane"><div class="lane-copy"><span class="lane-number">01 / RDF</span><h3><code>flyology_rdf</code></h3><p>The RDF 1.2 model and its serializations: Turtle, TriG, N-Triples and N-Quads, a dataset with set semantics, RDFC-1.0 canonicalization with either digest it admits, and a self-delimiting binary term encoding.</p></div></div>
+          <div class="lane"><div class="lane-copy"><span class="lane-number">02 / N3</span><h3><code>flyology_n3</code></h3><p>Notation3: quoted graphs, variables, paths, <code>is … of</code>, and the quantifiers. A formula is a term, so nesting is ordinary rather than special.</p></div></div>
+          <div class="lane"><div class="lane-copy"><span class="lane-number">03 / SPARQL</span><h3><code>flyology_sparql</code></h3><p>SPARQL 1.1 query syntax, read and written back. The four query forms, patterns, expressions, property paths, subqueries, aggregates and the RDF 1.2 term syntax. No evaluation.</p></div></div>
+        </div>
       </section>
 
-      <section class="page-shell" aria-labelledby="crates-title">
-        <h2 id="crates-title">Three crates</h2>
-        <p>They are separate because their models are, not merely because they are large.</p>
-        <table>
-          <thead><tr><th>Crate</th><th>What it is</th></tr></thead>
-          <tbody>
-            <tr><td><code>flyology_rdf</code></td><td>The RDF 1.2 model and its serializations</td></tr>
-            <tr><td><code>flyology_n3</code></td><td>Notation3, whose formulas and variables RDF cannot express</td></tr>
-            <tr><td><code>flyology_sparql</code></td><td>SPARQL 1.1 queries, which are documents rather than data</td></tr>
-          </tbody>
-        </table>
+      <section class="section page-shell" aria-labelledby="evidence-title">
+        <div class="section-heading"><div><p class="eyebrow">Conformance</p><h2 id="evidence-title">Measured rather than claimed.</h2></div><p>Each harness reads the W3C manifests with this library's own Turtle parser and reports what it examined, not a verdict. Corpora are pinned by commit: a number produced against an unrecorded revision is not evidence.</p></div>
+        <div class="decision-list"><dl>
+          <div class="decision-row"><dt>RDF 1.1 and 1.2</dt><dd>1050 entries examined. No valid document rejected, no invalid document accepted, no wrong result.</dd></div>
+          <div class="decision-row"><dt>RDFC-1.0</dt><dd>86 entries, the whole suite, nothing skipped. Canonical forms compared byte for byte, and the issued-identifier maps compared entry by entry.</dd></div>
+          <div class="decision-row"><dt>Notation3</dt><dd>1070 entries the working group stands behind, with no divergence. Twelve further entries it withdrew are run and reported apart, each with the reason it was withdrawn.</dd></div>
+          <div class="decision-row"><dt>SPARQL 1.1 syntax</dt><dd>488 entries, no divergence in either direction.</dd></div>
+          <div class="decision-row"><dt>Independent implementations</dt><dd>2,443 documents put to oxigraph and Jena, asking both whether they read this library's own output as the same graph. Five departures are recorded, each with its citation; the corpus sides with this library in all five.</dd></div>
+        </dl></div>
+      </section>
+
+      <section class="section page-shell mechanics" aria-labelledby="reading-title">
+        <div class="mechanics-copy"><p class="eyebrow">Reading</p><h2 id="reading-title">Nothing is retained that you do not retain.</h2><p>A sink receives one event per statement as the parser reads it, which is what lets a document larger than memory be read at all.</p><a href="guide/">Read the guide</a></div>
+        <ol class="mechanic-list">
+          <li class="mechanic-item"><span class="mechanic-index">01</span><div><h3>Feed what arrives</h3><p>Bytes may be split at any boundary, including inside an escape or a literal. Every document in the tests is parsed twice, whole and one byte at a time, and the two must agree.</p></div></li>
+          <li class="mechanic-item"><span class="mechanic-index">02</span><div><h3>Handle each statement</h3><p><code>On_Quad</code> runs once per statement as it closes. Collect them, stream them onward, or count them and keep nothing.</p></div></li>
+          <li class="mechanic-item"><span class="mechanic-index">03</span><div><h3>Decide what a failure was</h3><p>A diagnostic carries a code, the grammar production that failed, and a source span with byte, line and column at both ends, rather than a message to match on.</p></div></li>
+        </ol>
       </section>
     </main>
-    <footer class="site-footer">
-      <div class="page-shell">
-        <p>Flyology RDF is experimental. Interfaces, diagnostics and the binary term format may change before <code>v0.1.0</code>.</p>
-        <p><a href="https://github.com/flyology-ada/flyology-rdf">Source on GitHub</a> · MIT OR Apache-2.0</p>
-      </div>
-    </footer>
+    <footer class="site-footer"><div class="footer-inner"><span>Flyology RDF is experimental. Interfaces, diagnostics and the binary term format may change before <code>v0.1.0</code>.</span><div class="footer-links"><a href="guide/">Guide</a><a href="api/">API reference</a><a href="https://github.com/flyology-ada/flyology-rdf">GitHub</a><a href="https://flyology.org/">Flyology Runtime</a></div></div></footer>
   </body>
 </html>
