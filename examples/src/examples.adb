@@ -224,12 +224,12 @@ begin
       --  The same graph, written with different blank node labels and in
       --  a different order. Comparing the text says they differ.
       Left  : constant RDF.Datasets.Dataset :=
-        Read ("_:a <http://example.org/p> _:b ."
-              & " _:b <http://example.org/q> ""x"" .",
+        Read ("_:a <http://example.org/p> _:b ." & ASCII.LF
+              & "_:b <http://example.org/q> ""x"" ." & ASCII.LF,
               RDF.Turtle_Parsers.NTriples_Syntax);
       Right : constant RDF.Datasets.Dataset :=
-        Read ("_:y <http://example.org/q> ""x"" ."
-              & " _:x <http://example.org/p> _:y .",
+        Read ("_:y <http://example.org/q> ""x"" ." & ASCII.LF
+              & "_:x <http://example.org/p> _:y ." & ASCII.LF,
               RDF.Turtle_Parsers.NTriples_Syntax);
    begin
       IO.Put_Line

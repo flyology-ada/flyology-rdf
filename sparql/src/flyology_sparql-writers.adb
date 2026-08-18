@@ -46,6 +46,26 @@ package body Flyology_SPARQL.Writers is
       return Unbounded.To_String (Buffer);
    end Escape_Literal;
 
+   --  A local name is held decoded, so a character that only reaches the
+   --  grammar through PN_LOCAL_ESC has to be escaped again on the way
+   --  out. Writing it raw turned ":d\?" into ":d?", which the
+   --  scanner reads as the start of a variable.
+   function Escape_Local (Value : String) return String is
+      Buffer : Unbounded.Unbounded_String;
+   begin
+      for Item of Value loop
+         if Item in '_' | '~' | '.' | '-' | '!' | '$'
+                  | '&' | ''' | '(' | ')' | '*' | '+'
+                  | ',' | ';' | '=' | '/' | '?' | '#'
+                  | '@' | '%'
+         then
+            Unbounded.Append (Buffer, '\');
+         end if;
+         Unbounded.Append (Buffer, Item);
+      end loop;
+      return Unbounded.To_String (Buffer);
+   end Escape_Local;
+
    function To_SPARQL (Value : Syntax.Query) return String is
       Buffer : Unbounded.Unbounded_String;
 
@@ -114,7 +134,7 @@ package body Flyology_SPARQL.Writers is
 
             when Syntax.Prefixed_Node =>
                return Syntax.Detail (Value, Node) & ":"
-                 & Syntax.Text (Value, Node);
+                 & Escape_Local (Syntax.Text (Value, Node));
 
             when Syntax.Blank_Node =>
                return "_:" & Syntax.Text (Value, Node);

@@ -1009,7 +1009,14 @@ package body Flyology_SPARQL.Parsers is
                   end if;
                   Expect (Lexers.Close_Quoted_Token,
                           "a quoted triple terminator");
-                  Syntax.Add_Child (Tree, Into, Result);
+                  --  Not added to the group here. A reified triple states
+                  --  its reification through the position it occupies,
+                  --  and adding it as it was read made it stand once for
+                  --  the reading and once for the position -- twice over
+                  --  at every level of nesting, growing by one on every
+                  --  round trip. Parse_Triples adds it when it is the
+                  --  whole statement, which is the only time nothing else
+                  --  states it.
                   Leave_Nesting;
                   return Result;
                end;
@@ -1073,26 +1080,8 @@ package body Flyology_SPARQL.Parsers is
                   begin
                      Syntax.Add_Child (Tree, Triple, Subject);
                      Syntax.Add_Child (Tree, Triple, Predicate);
-                     declare
-                        --  As for a subject: a reified triple states its
-                        --  reification by being read, and again by
-                        --  standing in this position. Keeping both makes
-                        --  the group grow by one on every round trip.
-                        Before : constant Natural :=
-                          Syntax.Child_Count (Tree, Into);
-                        Object : constant Syntax.Node_Reference :=
-                          Parse_Pattern_Term (Into);
-                     begin
-                        if Syntax.Kind (Tree, Object) = Syntax.Reified_Node
-                          and then Syntax.Child_Count (Tree, Into)
-                                   = Before + 1
-                          and then Syntax.Child (Tree, Into, Before + 1)
-                                   = Object
-                        then
-                           Syntax.Drop_Last_Child (Tree, Into);
-                        end if;
-                        Syntax.Add_Child (Tree, Triple, Object);
-                     end;
+                     Syntax.Add_Child
+                       (Tree, Triple, Parse_Pattern_Term (Into));
                      Syntax.Add_Child (Tree, Into, Triple);
                      if Peek in Lexers.Reifier_Token
                               | Lexers.Open_Annotation_Token
@@ -1139,22 +1128,13 @@ package body Flyology_SPARQL.Parsers is
                  Parse_Pattern_Term (Into);
             begin
                if Peek in Lexers.Dot_Token | Lexers.Close_Brace_Token then
-                  if Syntax.Child_Count (Tree, Into) = Before then
+                  if Syntax.Kind (Tree, Subject) = Syntax.Reified_Node then
+                     --  Nothing else states it, so it states itself.
+                     Syntax.Add_Child (Tree, Into, Subject);
+                  elsif Syntax.Child_Count (Tree, Into) = Before then
                      Fail ("this term states nothing on its own");
                   end if;
                else
-                  --  A reified triple in subject position states its
-                  --  reification once, through being the subject. It was
-                  --  also added to the group as a statement of its own
-                  --  while it was read, so the group held it twice and
-                  --  the writer wrote it twice -- and one more time on
-                  --  every round trip after that.
-                  if Syntax.Kind (Tree, Subject) = Syntax.Reified_Node
-                    and then Syntax.Child_Count (Tree, Into) = Before + 1
-                    and then Syntax.Child (Tree, Into, Before + 1) = Subject
-                  then
-                     Syntax.Drop_Last_Child (Tree, Into);
-                  end if;
                   Parse_Predicate_Objects (Into, Subject);
                end if;
             end;

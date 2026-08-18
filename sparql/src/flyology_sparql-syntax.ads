@@ -195,15 +195,6 @@ package Flyology_SPARQL.Syntax is
    --  Attach a child to a node, in order.
    procedure Add_Child (Into : in out Builder; Parent, Item : Node_Reference);
 
-   --  Remove the last child of Parent.
-   --
-   --  A reified triple adds itself to the group as it is read, because it
-   --  states its reification. When it turns out to be a subject, that
-   --  statement is what the subject position already says, and the group
-   --  would otherwise hold it twice.
-   --  @param Into Builder to change
-   --  @param Parent Node whose last child is removed
-   procedure Drop_Last_Child (Into : in out Builder; Parent : Node_Reference);
 
    --  Record a prefix declaration.
    procedure Add_Prefix (Into : in out Builder; Name, Namespace : String);
