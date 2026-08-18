@@ -27,6 +27,7 @@ with Flyology_RDF.NQuads_Writers;
 with Flyology_RDF.Quads;
 with Flyology_RDF.Terms;
 with Flyology_RDF.Turtle_Parsers;
+with Flyology_RDF.Turtle_Writers;
 
 procedure Conformance is
 
@@ -38,6 +39,7 @@ procedure Conformance is
    package Quads renames Flyology_RDF.Quads;
    package Terms renames Flyology_RDF.Terms;
    package Parsers renames Flyology_RDF.Turtle_Parsers;
+   package TriG_Writers renames Flyology_RDF.Turtle_Writers;
    package Writers renames Flyology_RDF.NQuads_Writers;
 
    use type Parsers.Parse_Status;
@@ -64,6 +66,13 @@ procedure Conformance is
    Negative_Eval     : Natural := 0;
    Bytes_Parsed      : Natural := 0;
    Unexpected_Accept : Natural := 0;
+
+   --  Every document this crate accepts is written back out and read
+   --  again with this same parser. The corpora grade a parser reading
+   --  documents somebody else wrote; nothing in them grades what this
+   --  crate writes, and a writer whose output only a lenient reader
+   --  accepts passes every one of them.
+   Writer_Differed   : Natural := 0;
    Unexpected_Reject : Natural := 0;
    Wrong_Result      : Natural := 0;
    Skipped_Unknown   : Natural := 0;
@@ -338,6 +347,30 @@ procedure Conformance is
                   Note_Failure (Entry_Name, "rejected a valid document");
                   return;
                end if;
+
+               declare
+                  Written : constant String := TriG_Writers.To_TriG (Data);
+                  Again   : Datasets.Dataset;
+                  Reread  : Boolean;
+               begin
+                  Load (Written, Parsers.TriG_Syntax,
+                        Base & "written", Again, Reread);
+                  if not Reread then
+                     Writer_Differed := Writer_Differed + 1;
+                     Note_Failure
+                       (Entry_Name, "its own TriG output does not re-parse");
+                  elsif not Canon.Is_Isomorphic (Data, Again) then
+                     Writer_Differed := Writer_Differed + 1;
+                     Note_Failure
+                       (Entry_Name, "its own TriG output denotes something"
+                        & " else");
+                  end if;
+               exception
+                  when others =>
+                     Writer_Differed := Writer_Differed + 1;
+                     Note_Failure
+                       (Entry_Name, "writing or re-reading it raised");
+               end;
             else
                if Is_Eval then
                   Negative_Eval := Negative_Eval + 1;
@@ -485,6 +518,7 @@ begin
    IO.Put_Line ("  skipped, missing    " & Skipped_Missing'Image);
    IO.Put_Line ("  rejected, valid     " & Unexpected_Reject'Image);
    IO.Put_Line ("  accepted, invalid   " & Unexpected_Accept'Image);
+   IO.Put_Line ("  writer differed     " & Writer_Differed'Image);
    IO.Put_Line ("  wrong result        " & Wrong_Result'Image);
 
    if Unbounded.Length (Failures) > 0 then
@@ -497,7 +531,7 @@ begin
    if Examined = 0 then
       IO.Put_Line ("FAIL conformance: the corpus is present but empty");
       Ada.Command_Line.Set_Exit_Status (1);
-   elsif Unexpected_Accept + Unexpected_Reject + Wrong_Result > 0 then
+   elsif Writer_Differed + Unexpected_Accept + Unexpected_Reject + Wrong_Result > 0 then
       IO.Put_Line ("FAIL conformance");
       Ada.Command_Line.Set_Exit_Status (1);
    else

@@ -63,6 +63,12 @@ procedure SPARQL_Conformance is
    Bytes_Parsed      : Natural := 0;
    Unexpected_Accept : Natural := 0;
    Streaming_Differed : Natural := 0;
+
+   --  What this crate writes, read again by this crate. The corpus grades
+   --  a parser over queries somebody else wrote and says nothing about the
+   --  writer -- which is how a dataset clause emitted after WHERE survived
+   --  every run.
+   Writer_Differed    : Natural := 0;
    Unexpected_Reject : Natural := 0;
    Skipped_Evaluation : Natural := 0;
    Skipped_Update     : Natural := 0;
@@ -228,6 +234,44 @@ procedure SPARQL_Conformance is
                     Query_Parsers.Parse (Text);
                   Whole  : constant String := Query_Writers.To_SPARQL (Result);
                begin
+                  --  A writer fault is the writer's, not the parser's,
+                  --  so it is caught here rather than reaching the
+                  --  handler that grades the parse.
+                  begin
+                     declare
+                        Again : constant String :=
+                          Query_Writers.To_SPARQL
+                            (Query_Parsers.Parse (Whole));
+                        Labelled : constant Boolean :=
+                          Ada.Strings.Fixed.Index (Whole, "_:") > 0;
+                     begin
+                        --  Re-reading its own output is the property that
+                        --  always holds. Writing it identically a second
+                        --  time does not, once blank nodes are involved:
+                        --  a label carries no meaning, and which one a
+                        --  node is given depends on what else the query
+                        --  already used. Text is compared only where no
+                        --  blank node can move.
+                        if not Labelled and then Again /= Whole then
+                           Writer_Differed := Writer_Differed + 1;
+                           Unbounded.Append
+                             (Divergences,
+                              "    " & Entry_Name
+                              & ": its own output does not write back the"
+                              & " same" & ASCII.LF);
+                        end if;
+                     end;
+                  exception
+                     when Error : others =>
+                        Writer_Differed := Writer_Differed + 1;
+                        Unbounded.Append
+                          (Divergences,
+                           "    " & Entry_Name & ": re-reading its own"
+                           & " output raised: "
+                           & Ada.Exceptions.Exception_Message (Error)
+                           & ASCII.LF);
+                  end;
+
                   --  The same query fed one byte at a time has to come out
                   --  the same. Splitting at every boundary in turn is the
                   --  only way to be sure none of them is special, and the
@@ -362,6 +406,7 @@ begin
    IO.Put_Line ("  rejected, valid     " & Unexpected_Reject'Image);
    IO.Put_Line ("  accepted, invalid   " & Unexpected_Accept'Image);
    IO.Put_Line ("  streaming differed  " & Streaming_Differed'Image);
+   IO.Put_Line ("  writer differed     " & Writer_Differed'Image);
 
    if Unbounded.Length (Divergences) > 0 then
       IO.Put_Line ("  divergences:");
@@ -371,7 +416,9 @@ begin
    if Examined = 0 then
       IO.Put_Line ("FAIL sparql_conformance: the corpus is present but empty");
       Ada.Command_Line.Set_Exit_Status (1);
-   elsif Unexpected_Accept + Unexpected_Reject + Streaming_Differed > 0 then
+   elsif Unexpected_Accept + Unexpected_Reject + Streaming_Differed
+         + Writer_Differed > 0
+   then
       IO.Put_Line ("FAIL sparql_conformance");
       Ada.Command_Line.Set_Exit_Status (1);
    else

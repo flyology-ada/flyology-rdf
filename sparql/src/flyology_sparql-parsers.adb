@@ -1073,8 +1073,26 @@ package body Flyology_SPARQL.Parsers is
                   begin
                      Syntax.Add_Child (Tree, Triple, Subject);
                      Syntax.Add_Child (Tree, Triple, Predicate);
-                     Syntax.Add_Child
-                       (Tree, Triple, Parse_Pattern_Term (Into));
+                     declare
+                        --  As for a subject: a reified triple states its
+                        --  reification by being read, and again by
+                        --  standing in this position. Keeping both makes
+                        --  the group grow by one on every round trip.
+                        Before : constant Natural :=
+                          Syntax.Child_Count (Tree, Into);
+                        Object : constant Syntax.Node_Reference :=
+                          Parse_Pattern_Term (Into);
+                     begin
+                        if Syntax.Kind (Tree, Object) = Syntax.Reified_Node
+                          and then Syntax.Child_Count (Tree, Into)
+                                   = Before + 1
+                          and then Syntax.Child (Tree, Into, Before + 1)
+                                   = Object
+                        then
+                           Syntax.Drop_Last_Child (Tree, Into);
+                        end if;
+                        Syntax.Add_Child (Tree, Triple, Object);
+                     end;
                      Syntax.Add_Child (Tree, Into, Triple);
                      if Peek in Lexers.Reifier_Token
                               | Lexers.Open_Annotation_Token
@@ -1125,6 +1143,18 @@ package body Flyology_SPARQL.Parsers is
                      Fail ("this term states nothing on its own");
                   end if;
                else
+                  --  A reified triple in subject position states its
+                  --  reification once, through being the subject. It was
+                  --  also added to the group as a statement of its own
+                  --  while it was read, so the group held it twice and
+                  --  the writer wrote it twice -- and one more time on
+                  --  every round trip after that.
+                  if Syntax.Kind (Tree, Subject) = Syntax.Reified_Node
+                    and then Syntax.Child_Count (Tree, Into) = Before + 1
+                    and then Syntax.Child (Tree, Into, Before + 1) = Subject
+                  then
+                     Syntax.Drop_Last_Child (Tree, Into);
+                  end if;
                   Parse_Predicate_Objects (Into, Subject);
                end if;
             end;

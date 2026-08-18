@@ -69,6 +69,11 @@ procedure N3_Conformance is
    --  status is published in the manifest, so this reads it rather than
    --  deciding it here.
    Streaming_Differed : Natural := 0;
+
+   --  What this crate writes, read again by this crate. The corpus grades
+   --  a parser over documents somebody else wrote and says nothing about
+   --  the writer.
+   Writer_Differed    : Natural := 0;
    Withdrawn          : Natural := 0;
    Withdrawn_Diverged : Natural := 0;
    Bytes_Parsed      : Natural := 0;
@@ -252,6 +257,20 @@ procedure N3_Conformance is
                     N3_Parsers.Parse (Text, Base);
                   Whole  : constant String := N3_Writers.To_N3 (Result);
                begin
+                  declare
+                     Again : constant Model.Term :=
+                       N3_Parsers.Parse (Whole, Base);
+                  begin
+                     if N3_Writers.To_N3 (Again) /= Whole then
+                        Writer_Differed := Writer_Differed + 1;
+                        Unbounded.Append
+                          (Divergences,
+                           "    " & Entry_Name
+                           & ": its own N3 output does not read back"
+                           & ASCII.LF);
+                     end if;
+                  end;
+
                   --  The same document fed one byte at a time has to come
                   --  out the same. Splitting at every boundary in turn is
                   --  the only way to be sure none of them is special, and
@@ -406,6 +425,7 @@ begin
    IO.Put_Line ("  rejected, valid     " & Unexpected_Reject'Image);
    IO.Put_Line ("  accepted, invalid   " & Unexpected_Accept'Image);
    IO.Put_Line ("  streaming differed  " & Streaming_Differed'Image);
+   IO.Put_Line ("  writer differed     " & Writer_Differed'Image);
    IO.Put_Line ("  withdrawn, diverged " & Withdrawn_Diverged'Image);
 
    if Unbounded.Length (Divergences) > 0 then
@@ -416,7 +436,9 @@ begin
    if Examined = 0 then
       IO.Put_Line ("FAIL n3_conformance: the corpus is present but empty");
       Ada.Command_Line.Set_Exit_Status (1);
-   elsif Unexpected_Accept + Unexpected_Reject + Streaming_Differed > 0 then
+   elsif Unexpected_Accept + Unexpected_Reject + Streaming_Differed
+         + Writer_Differed > 0
+   then
       IO.Put_Line ("FAIL n3_conformance");
       Ada.Command_Line.Set_Exit_Status (1);
    else

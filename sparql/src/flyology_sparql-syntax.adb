@@ -102,6 +102,15 @@ package body Flyology_SPARQL.Syntax is
       Into.Draft.Nodes (Positive (Parent)).Children.Append (Item);
    end Add_Child;
 
+   procedure Drop_Last_Child (Into : in out Builder; Parent : Node_Reference)
+   is
+      Slot : constant Positive := Positive (Parent);
+   begin
+      if not Into.Draft.Nodes (Slot).Children.Is_Empty then
+         Into.Draft.Nodes (Slot).Children.Delete_Last;
+      end if;
+   end Drop_Last_Child;
+
    procedure Add_Prefix (Into : in out Builder; Name, Namespace : String) is
    begin
       Into.Draft.Bindings.Append

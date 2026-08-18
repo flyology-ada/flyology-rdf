@@ -9,6 +9,43 @@ package body Flyology_SPARQL.Writers is
    Quote : constant Character := Character'Val (34);
    use type Syntax.Node_Reference;
 
+   --  A literal is held decoded, so writing its text back verbatim
+   --  produces something the parser cannot read the moment it contains a
+   --  quote, a backslash or a control character. The short escapes are
+   --  the ones SPARQL names; everything else below a space becomes a
+   --  numeric escape, and the rest of the UTF-8 passes through.
+   function Escape_Literal (Value : String) return String is
+      Buffer : Unbounded.Unbounded_String;
+   begin
+      for Item of Value loop
+         case Item is
+            when '"'      => Unbounded.Append (Buffer, "\""");
+            when '\'     => Unbounded.Append (Buffer, "\\");
+            when ASCII.LF => Unbounded.Append (Buffer, "\n");
+            when ASCII.CR => Unbounded.Append (Buffer, "\r");
+            when ASCII.HT => Unbounded.Append (Buffer, "\t");
+            when ASCII.BS => Unbounded.Append (Buffer, "\b");
+            when ASCII.FF => Unbounded.Append (Buffer, "\f");
+            when others =>
+               if Character'Pos (Item) < 16#20# then
+                  declare
+                     Digits_Text : constant String := "0123456789ABCDEF";
+                     Code : constant Natural := Character'Pos (Item);
+                  begin
+                     Unbounded.Append (Buffer, "\u00");
+                     Unbounded.Append
+                       (Buffer, Digits_Text (Digits_Text'First + Code / 16));
+                     Unbounded.Append
+                       (Buffer, Digits_Text (Digits_Text'First + Code mod 16));
+                  end;
+               else
+                  Unbounded.Append (Buffer, Item);
+               end if;
+         end case;
+      end loop;
+      return Unbounded.To_String (Buffer);
+   end Escape_Literal;
+
    function To_SPARQL (Value : Syntax.Query) return String is
       Buffer : Unbounded.Unbounded_String;
 
@@ -98,16 +135,19 @@ package body Flyology_SPARQL.Writers is
                   Detail : constant String := Syntax.Detail (Value, Node);
                begin
                   if Detail = "^^" then
-                     return """" & Syntax.Text (Value, Node) & """^^"
+                     return """" & Escape_Literal (Syntax.Text (Value, Node))
+                       & """^^"
                        & Render (Syntax.Child (Value, Node, 1));
                   elsif Detail'Length > 1 and then Detail (Detail'First) = '@'
                   then
-                     return """" & Syntax.Text (Value, Node) & """" & Detail;
+                     return """" & Escape_Literal (Syntax.Text (Value, Node))
+                       & """" & Detail;
                   elsif Detail'Length > 0 then
                      --  A numeric or boolean literal is written as it was.
                      return Syntax.Text (Value, Node);
                   end if;
-                  return """" & Syntax.Text (Value, Node) & """";
+                  return """" & Escape_Literal (Syntax.Text (Value, Node))
+                    & """";
                end;
 
             when Syntax.Or_Node | Syntax.And_Node | Syntax.Compare_Node
