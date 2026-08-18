@@ -73,6 +73,9 @@ procedure Conformance is
    --  crate writes, and a writer whose output only a lenient reader
    --  accepts passes every one of them.
    Writer_Differed   : Natural := 0;
+   --  How many documents the writer check actually compared. A
+   --  divergence count of zero says nothing without it.
+   Writer_Compared   : Natural := 0;
    Unexpected_Reject : Natural := 0;
    Wrong_Result      : Natural := 0;
    Skipped_Unknown   : Natural := 0;
@@ -353,6 +356,7 @@ procedure Conformance is
                   Again   : Datasets.Dataset;
                   Reread  : Boolean;
                begin
+                  Writer_Compared := Writer_Compared + 1;
                   Load (Written, Parsers.TriG_Syntax,
                         Base & "written", Again, Reread);
                   if not Reread then
@@ -518,6 +522,7 @@ begin
    IO.Put_Line ("  skipped, missing    " & Skipped_Missing'Image);
    IO.Put_Line ("  rejected, valid     " & Unexpected_Reject'Image);
    IO.Put_Line ("  accepted, invalid   " & Unexpected_Accept'Image);
+   IO.Put_Line ("  writer compared     " & Writer_Compared'Image);
    IO.Put_Line ("  writer differed     " & Writer_Differed'Image);
    IO.Put_Line ("  wrong result        " & Wrong_Result'Image);
 

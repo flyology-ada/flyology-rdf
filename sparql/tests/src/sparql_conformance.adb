@@ -69,6 +69,9 @@ procedure SPARQL_Conformance is
    --  writer -- which is how a dataset clause emitted after WHERE survived
    --  every run.
    Writer_Differed    : Natural := 0;
+   --  How many documents the writer check compared. A divergence count
+   --  of zero says nothing without it.
+   Writer_Compared    : Natural := 0;
    Unexpected_Reject : Natural := 0;
    Skipped_Evaluation : Natural := 0;
    Skipped_Update     : Natural := 0;
@@ -252,6 +255,7 @@ procedure SPARQL_Conformance is
                         --  node is given depends on what else the query
                         --  already used. Text is compared only where no
                         --  blank node can move.
+                        Writer_Compared := Writer_Compared + 1;
                         if not Labelled and then Again /= Whole then
                            Writer_Differed := Writer_Differed + 1;
                            Unbounded.Append
@@ -406,6 +410,7 @@ begin
    IO.Put_Line ("  rejected, valid     " & Unexpected_Reject'Image);
    IO.Put_Line ("  accepted, invalid   " & Unexpected_Accept'Image);
    IO.Put_Line ("  streaming differed  " & Streaming_Differed'Image);
+   IO.Put_Line ("  writer compared     " & Writer_Compared'Image);
    IO.Put_Line ("  writer differed     " & Writer_Differed'Image);
 
    if Unbounded.Length (Divergences) > 0 then

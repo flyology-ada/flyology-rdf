@@ -225,6 +225,14 @@ not a verdict:
 Corpora are pinned in `scripts/provision-oracles.sh`; the runs above are
 against those pins.
 
+Every document a suite accepts is also written back out and read again by
+this crate's own parser: 692 RDF entries compared by canonical form, 1,160
+Notation3 documents and 317 SPARQL queries by their own output, with no
+divergence. The 358 RDF entries missing from that count are the ones the
+suite expects to be rejected, so there is nothing to write. The check found
+fifty-four SPARQL writer defects the day it was added, one of which grew
+the output by a copy of a reified triple on every round trip.
+
 The N3 suite carries 123 further entries its working group withdrew,
 marked `rdft:approval rdft:Rejected` in the manifest. They are read, run
 and reported like any other entry and counted apart: grading against a

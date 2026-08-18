@@ -74,6 +74,9 @@ procedure N3_Conformance is
    --  a parser over documents somebody else wrote and says nothing about
    --  the writer.
    Writer_Differed    : Natural := 0;
+   --  How many documents the writer check compared. A divergence count
+   --  of zero says nothing without it.
+   Writer_Compared    : Natural := 0;
    Withdrawn          : Natural := 0;
    Withdrawn_Diverged : Natural := 0;
    Bytes_Parsed      : Natural := 0;
@@ -261,6 +264,7 @@ procedure N3_Conformance is
                      Again : constant Model.Term :=
                        N3_Parsers.Parse (Whole, Base);
                   begin
+                     Writer_Compared := Writer_Compared + 1;
                      if N3_Writers.To_N3 (Again) /= Whole then
                         Writer_Differed := Writer_Differed + 1;
                         Unbounded.Append
@@ -425,6 +429,7 @@ begin
    IO.Put_Line ("  rejected, valid     " & Unexpected_Reject'Image);
    IO.Put_Line ("  accepted, invalid   " & Unexpected_Accept'Image);
    IO.Put_Line ("  streaming differed  " & Streaming_Differed'Image);
+   IO.Put_Line ("  writer compared     " & Writer_Compared'Image);
    IO.Put_Line ("  writer differed     " & Writer_Differed'Image);
    IO.Put_Line ("  withdrawn, diverged " & Withdrawn_Diverged'Image);
 

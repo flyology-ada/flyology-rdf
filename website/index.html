@@ -100,13 +100,23 @@ Written :=
       </section>
 
       <section class="section page-shell" aria-labelledby="evidence-title">
-        <div class="section-heading"><div><p class="eyebrow">Conformance</p><h2 id="evidence-title">Measured rather than claimed.</h2></div><p>Each harness reads the W3C manifests with this library's own Turtle parser and reports what it examined, not a verdict. Corpora are pinned by commit: a number produced against an unrecorded revision is not evidence.</p></div>
+        <div class="section-heading"><div><p class="eyebrow">Conformance</p><h2 id="evidence-title">What each harness examined.</h2></div><p>A harness reads the W3C manifests with this library's own Turtle parser. It reports counts, not a verdict. Corpora are pinned by commit.</p></div>
+        <div class="benchmark-table-wrap">
+          <table>
+            <thead><tr><th scope="col">Suite</th><th scope="col">Examined</th><th scope="col">Rejected valid</th><th scope="col">Accepted invalid</th><th scope="col">Wrong result</th><th scope="col">Writer differed</th></tr></thead>
+            <tbody>
+              <tr><td>RDF 1.1 and 1.2</td><td>1,050</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+              <tr><td>RDFC-1.0</td><td>86</td><td>&mdash;</td><td>&mdash;</td><td>0</td><td>&mdash;</td></tr>
+              <tr><td>Notation3</td><td>1,070</td><td>0</td><td>0</td><td>&mdash;</td><td>0</td></tr>
+              <tr><td>SPARQL 1.1 syntax</td><td>488</td><td>0</td><td>0</td><td>&mdash;</td><td>0</td></tr>
+            </tbody>
+          </table>
+        </div>
         <div class="decision-list"><dl>
-          <div class="decision-row"><dt>RDF 1.1 and 1.2</dt><dd>1,050 entries examined. No valid document rejected, no invalid document accepted, no wrong result.</dd></div>
-          <div class="decision-row"><dt>RDFC-1.0</dt><dd>86 entries, the whole suite, nothing skipped. Canonical forms compared byte for byte, and the issued-identifier maps compared entry by entry.</dd></div>
-          <div class="decision-row"><dt>Notation3</dt><dd>1,070 entries that the working group endorses, with no divergence. A further 123 entries that the group withdrew are run and counted apart; twelve of those diverge, all notation the specification did not keep, and the harness reports each with the reason this library rejected it.</dd></div>
-          <div class="decision-row"><dt>SPARQL 1.1 syntax</dt><dd>488 entries, no divergence in either direction.</dd></div>
-          <div class="decision-row"><dt>Independent implementations</dt><dd>2,443 corpus documents seen, 2,081 accepted, and 2,049 compared &mdash; the remaining 32 state nothing, so there is no graph to ask about. Each compared document goes to Jena and to Oxigraph twice: does it read the document as we do, and does it read our own serialization of it as the same graph. Jena answered all 2,049 of each; Oxigraph declined some and answered RDF-star for others, so it answered 1,758 and 1,766. Neither differed anywhere. Five oracle departures are recorded with their citations, and nothing is unsettled.</dd></div>
+          <div class="decision-row"><dt>Skipped</dt><dd>The RDFC-1.0 suite is run whole. 811 SPARQL entries need a query engine and 83 are Update rather than queries; 193 Notation3 entries need a reasoner. RDF evaluation entries are run, and compared by canonical form.</dd></div>
+          <div class="decision-row"><dt>Withdrawn</dt><dd>The Notation3 suite carries 123 further entries marked <code>rdft:approval rdft:Rejected</code>. They are run and counted apart. Twelve diverge. Each is reported with the reason this library rejected it.</dd></div>
+          <div class="decision-row"><dt>Writers</dt><dd>Every accepted document is written out and read again by this library's own parser. 692 RDF entries are compared by canonical form, 1,160 Notation3 documents and 317 SPARQL queries by their own output. The 358 RDF entries outside that count are the ones the suite expects to be rejected.</dd></div>
+          <div class="decision-row"><dt>Other implementations</dt><dd>2,443 documents are read, 2,081 accepted, 2,049 compared. The other 32 state nothing. Each compared document goes to Jena and to Oxigraph. Each is asked two questions. Does it read the document as this library does? Does it read this library's serialization as the same graph? Jena answered both for all 2,049. Oxigraph answered 1,758 and 1,766; it declined the rest or answered RDF-star. Neither differed. Five oracle departures are recorded with citations. Nothing is unsettled.</dd></div>
         </dl></div>
       </section>
 
