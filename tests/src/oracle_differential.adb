@@ -33,6 +33,7 @@
 --  quietly passes because it did nothing is worse than one that is absent.
 
 with Ada.Command_Line;
+with Ada.Containers.Indefinite_Vectors;
 with Ada.Directories;
 with Ada.Environment_Variables;
 with Ada.Strings.Fixed;
@@ -69,6 +70,7 @@ procedure Oracle_Differential is
    use type Parsers.Parse_Status;
    use type Ada.Directories.File_Size;
    use type OS.Process_Id;
+   use type Ada.Containers.Count_Type;
 
    --  Everything resolves against one base, on both sides, so that a
    --  relative reference cannot be the reason for a disagreement.
@@ -100,58 +102,167 @@ procedure Oracle_Differential is
    Present : array (Oracle_Id) of Boolean := (others => False);
    Command : array (Oracle_Id) of Unbounded.Unbounded_String;
 
+   package Line_Vectors is new Ada.Containers.Indefinite_Vectors
+     (Index_Type => Positive, Element_Type => String);
+
    --  Oracle behaviours we have read the specification on and settled.
-   --  Each is a place an oracle departs from what RDF requires, with the
-   --  citation and the corpus entry that decides it. A disagreement on
-   --  this list is reported and not counted against us. A disagreement
-   --  that is not on it is unsettled, and fails the run until somebody
-   --  reads the specification and either fixes this crate or adds a line
-   --  here -- which is the point: the list is the record of that reading,
-   --  not a way to make a red run green.
+   --
+   --  Each is keyed on the terms themselves -- what we write against what
+   --  the oracle writes in its place -- rather than on the document it was
+   --  noticed in. Keying on the document would silence any other
+   --  disagreement that happened to appear in the same file, which is the
+   --  one thing such a list must not do. Every differing statement has to
+   --  be accounted for by a line here; one that is not fails the run,
+   --  whatever the other oracles say, until somebody reads the
+   --  specification and either fixes this crate or records what they read.
    type Deviation is record
-      Who   : Oracle_Id;
-      Where : Unbounded.Unbounded_String;
-      Why   : Unbounded.Unbounded_String;
+      Who        : Oracle_Id;
+      We_Write   : Unbounded.Unbounded_String;
+      They_Write : Unbounded.Unbounded_String;
+      Why        : Unbounded.Unbounded_String;
    end record;
 
-   function D (Who : Oracle_Id; Where, Why : String) return Deviation
-   is (Who   => Who,
-       Where => Unbounded.To_Unbounded_String (Where),
-       Why   => Unbounded.To_Unbounded_String (Why));
+   function D
+     (Who : Oracle_Id; We_Write, They_Write, Why : String) return Deviation
+   is (Who        => Who,
+       We_Write   => Unbounded.To_Unbounded_String (We_Write),
+       They_Write => Unbounded.To_Unbounded_String (They_Write),
+       Why        => Unbounded.To_Unbounded_String (Why));
 
    Settled : constant array (Positive range <>) of Deviation :=
-     (D (Oxigraph, "normalization-02",
+     (D (Oxigraph,
+         "<eXAMPLE://a/b/%63/%7bfoo%7d#xyz>",
+         "<eXAMPLE://a/./b/../b/%63/%7bfoo%7d#xyz>",
          "oxigraph does not apply remove_dot_segments to a reference that"
          & " carries its own scheme; RFC 3986 5.2.2 applies it regardless,"
-         & " and the corpus expects the normalized form"),
-      D (Fuseki, "IRI-resolution-07",
+         & " and the corpus expects the segments removed"),
+      D (Fuseki,
+         "<http:g>",
+         "<" & Base & "g>",
          "Jena resolves non-strictly when a reference's scheme matches the"
          & " base's -- the backward-compatibility behaviour RFC 3986 5.2.2"
-         & " describes and RDF 1.1 does not take. It reads <http:g> against"
-         & " an http: base as a relative reference; the corpus expects"
+         & " describes and RDF 1.1 does not take. The corpus expects"
          & " <http:g> unchanged"),
-      D (Riot, "IRI-resolution-07",
+      D (Riot,
+         "<http:g>",
+         "<" & Base & "g>",
          "the same non-strict resolution as Fuseki, which is the same"
          & " parser reached a different way"));
 
-   --  Whether this oracle disagreeing here is one of the settled ones.
-   function Is_Settled
-     (Who   : Oracle_Id;
-      Path  : String;
-      Why   : out Unbounded.Unbounded_String) return Boolean is
+   --  The statements of a canonical form, one per line.
+   function Statements (Value : String) return Line_Vectors.Vector is
+      Result : Line_Vectors.Vector;
+      First  : Positive := Value'First;
    begin
-      for Item of Settled loop
-         if Item.Who = Who
-           and then Ada.Strings.Fixed.Index
-                      (Path, Unbounded.To_String (Item.Where)) > 0
-         then
-            Why := Item.Why;
-            return True;
+      for Index in Value'Range loop
+         if Value (Index) = ASCII.LF then
+            if Index > First then
+               Result.Append (Value (First .. Index - 1));
+            end if;
+            First := Index + 1;
          end if;
       end loop;
+      if First <= Value'Last then
+         Result.Append (Value (First .. Value'Last));
+      end if;
+      return Result;
+   end Statements;
+
+   function Holds (Where : Line_Vectors.Vector; What : String) return Boolean
+   is (for some Line of Where => Line = What);
+
+   --  Two statements that say the same thing about the same subject and
+   --  predicate differ only in what follows, which is the term the oracle
+   --  and this crate disagree about.
+   function Same_Opening (Left, Right : String) return Boolean is
+      Cut : Natural := 0;
+      Seen : Natural := 0;
+   begin
+      for Index in Left'Range loop
+         if Left (Index) = ' ' then
+            Seen := Seen + 1;
+            if Seen = 2 then
+               Cut := Index;
+               exit;
+            end if;
+         end if;
+      end loop;
+      if Cut = 0 or else Right'Length < Cut - Left'First + 1 then
+         return False;
+      end if;
+      return Left (Left'First .. Cut)
+             = Right (Right'First .. Right'First + Cut - Left'First);
+   end Same_Opening;
+
+   --  Whether every statement the two forms disagree about is one this
+   --  list accounts for.
+   function Fully_Settled
+     (Who    : Oracle_Id;
+      Ours   : String;
+      Theirs : String;
+      Why    : out Unbounded.Unbounded_String) return Boolean
+   is
+      Mine   : constant Line_Vectors.Vector := Statements (Ours);
+      Yours  : constant Line_Vectors.Vector := Statements (Theirs);
+      Only_Mine, Only_Yours : Line_Vectors.Vector;
+      Reasons : Unbounded.Unbounded_String;
+   begin
       Why := Unbounded.Null_Unbounded_String;
-      return False;
-   end Is_Settled;
+      for Line of Mine loop
+         if not Holds (Yours, Line) then
+            Only_Mine.Append (Line);
+         end if;
+      end loop;
+      for Line of Yours loop
+         if not Holds (Mine, Line) then
+            Only_Yours.Append (Line);
+         end if;
+      end loop;
+
+      if Only_Mine.Is_Empty or else Only_Mine.Length /= Only_Yours.Length
+      then
+         --  Statements gained or lost outright, rather than one term
+         --  written differently. Nothing here explains that.
+         return False;
+      end if;
+
+      for Line of Only_Mine loop
+         declare
+            Explained : Boolean := False;
+         begin
+            for Other of Only_Yours loop
+               if Same_Opening (Line, Other) then
+                  for Item of Settled loop
+                     if Item.Who = Who
+                       and then Ada.Strings.Fixed.Index
+                                  (Line, Unbounded.To_String (Item.We_Write))
+                                > 0
+                       and then Ada.Strings.Fixed.Index
+                                  (Other,
+                                   Unbounded.To_String (Item.They_Write)) > 0
+                     then
+                        Explained := True;
+                        if Ada.Strings.Fixed.Index
+                             (Unbounded.To_String (Reasons),
+                              Unbounded.To_String (Item.Why)) = 0
+                        then
+                           Unbounded.Append (Reasons, Item.Why);
+                        end if;
+                        exit;
+                     end if;
+                  end loop;
+               end if;
+               exit when Explained;
+            end loop;
+            if not Explained then
+               return False;
+            end if;
+         end;
+      end loop;
+
+      Why := Reasons;
+      return True;
+   end Fully_Settled;
 
    Considered      : Natural := 0;
    Skipped_Large   : Natural := 0;
@@ -477,12 +588,14 @@ procedure Oracle_Differential is
          Subject  : String;
          From     : String;
          Expected : String;
-         Reason   : out Unbounded.Unbounded_String) return Outcome
+         Reason   : out Unbounded.Unbounded_String;
+         Their_Form : out Unbounded.Unbounded_String) return Outcome
       is
          Theirs    : Unbounded.Unbounded_String;
          Converted : Boolean;
       begin
          Reason := Unbounded.Null_Unbounded_String;
+         Their_Form := Unbounded.Null_Unbounded_String;
          Convert (Which, Subject, From, Theirs, Converted);
          if not Converted then
             return Declined;
@@ -506,6 +619,8 @@ procedure Oracle_Differential is
                  (Which'Image & " produced N-Quads we cannot read");
                return Disagreed;
             elsif Canonical (Round) /= Expected then
+               Their_Form :=
+                 Unbounded.To_Unbounded_String (Canonical (Round));
                Reason := Unbounded.To_Unbounded_String
                  (Which'Image & " read "
                   & (if Subject = Text then "the document"
@@ -529,6 +644,7 @@ procedure Oracle_Differential is
       is
          Results : array (Oracle_Id) of Outcome := (others => Declined);
          Reasons : array (Oracle_Id) of Unbounded.Unbounded_String;
+         Forms   : array (Oracle_Id) of Unbounded.Unbounded_String;
          Agreed  : Natural := 0;
 
          procedure Record_It (Which : Oracle_Id; Result : Outcome) is
@@ -569,7 +685,8 @@ procedure Oracle_Differential is
          for Which in Oracle_Id loop
             if Present (Which) then
                Results (Which) :=
-                 Ask (Which, Subject, From, Expected, Reasons (Which));
+                 Ask (Which, Subject, From, Expected, Reasons (Which),
+                      Forms (Which));
                if Results (Which) = Answered then
                   Agreed := Agreed + 1;
                end if;
@@ -582,7 +699,10 @@ procedure Oracle_Differential is
                   declare
                      Why : Unbounded.Unbounded_String;
                   begin
-                     if Is_Settled (Which, Path, Why) then
+                     if Fully_Settled
+                          (Which, Expected,
+                           Unbounded.To_String (Forms (Which)), Why)
+                     then
                         --  A departure we have read the specification on.
                         --  Reported with its citation, not counted
                         --  against us.

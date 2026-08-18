@@ -169,6 +169,13 @@ specification and either fixes this crate or adds a line -- which is the
 point of the list: it is the record of that reading, not a way to make a
 red run green.
 
+Each entry is keyed on the terms themselves, what we write against what the
+oracle writes in its place, rather than on the document it was noticed in.
+Keying on the document would silence any other disagreement that happened
+to appear in the same file, which is the one thing such a list must not do:
+every differing statement has to be accounted for, and a statement gained
+or lost outright is never accounted for at all.
+
 Five departures are recorded today, and the W3C expected results side with
 us in all five:
 
