@@ -14,4 +14,12 @@ project Flyology_N3 is
         ("-gnat2022", "-gnatwa", "-gnatwJ", "-fstack-check",
          "-fno-strict-aliasing", "-O1", "-gnata");
    end Compiler;
+   --  The generated reference is themed by the shared website kit, the
+   --  same way the RDF crate's is, so every Flyology reference reads
+   --  alike.
+   package Documentation is
+      for Output_Dir ("html") use "docs/api";
+      for Resources_Dir ("html") use "docs/gnatdoc/html";
+   end Documentation;
+
 end Flyology_N3;
