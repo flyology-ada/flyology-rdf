@@ -42,29 +42,49 @@ package body Flyology_RDF.Turtle_Writers is
    procedure Bind
      (Into      : in out Prefix_Map;
       Prefix    : String;
-      Namespace : String) is
+      Namespace : String)
+   is
+      Position : Namespace_Maps.Cursor := Into.By_Namespace.First;
    begin
+      --  The map is keyed by namespace, so replacing a binding for the
+      --  same prefix means finding the namespace that held it. Keeping
+      --  both would write two @prefix declarations for one prefix, and
+      --  every name abbreviated against the first would read back
+      --  against the second.
+      while Namespace_Maps.Has_Element (Position) loop
+         if Namespace_Maps.Element (Position) = Prefix then
+            declare
+               Doomed : Namespace_Maps.Cursor := Position;
+            begin
+               Namespace_Maps.Next (Position);
+               Into.By_Namespace.Delete (Doomed);
+            end;
+         else
+            Namespace_Maps.Next (Position);
+         end if;
+      end loop;
       Into.By_Namespace.Include (Namespace, Prefix);
    end Bind;
 
-   --  The local part of a prefixed name may not contain these, and this
-   --  writer does not escape them: an IRI needing an escape is written in
-   --  full instead, which is always legal and always parses back.
+   --  The prefixed-name grammar admits more than this -- escapes, and a
+   --  range of non-ASCII name characters -- but everything outside this
+   --  set is written as a full IRI instead, which is always legal and
+   --  always parses back. A byte-level check cannot tell a non-ASCII name
+   --  character from one the grammar forbids, so bytes above ASCII are
+   --  not abbreviated at all.
    function Is_Simple_Local (Value : String) return Boolean is
    begin
       for Item of Value loop
-         if Item in '/' | '#' | '?' | '[' | ']' | '@' | '%' | '\' | '&'
-                  | '(' | ')' | ',' | ';' | '=' | '!' | '$' | '''
-                  | '*' | '+' | '~' | ':' | '"' | '<' | '>' | '{' | '}'
-                  | '|' | '^' | '`' | ' '
-           or else Character'Pos (Item) <= 16#20#
+         if Item not in 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9'
+                      | '_' | '-' | '.'
          then
             return False;
          end if;
       end loop;
-      --  A local name may not begin or end with a dot.
+      --  A local name may not open with a hyphen or a dot, and may not
+      --  end with a dot.
       if Value'Length > 0
-        and then (Value (Value'First) = '.'
+        and then (Value (Value'First) in '-' | '.'
                   or else Value (Value'Last) = '.')
       then
          return False;

@@ -467,7 +467,7 @@ package body Flyology_RDF.Lexers is
                      Emit (String_Token);
                      return;
                   elsif Look = Partial or else Look = Exhausted then
-                     Incomplete;
+                     Want_More;
                      return;
                   elsif Look = Bad then
                      Fail (Invalid_Encoding);
@@ -543,6 +543,9 @@ package body Flyology_RDF.Lexers is
       --  Local names admit dots internally but may not end with one, so the
       --  scan records the last position that was a legal ending and backs
       --  up to it. Without that, "ex:a.b ." would swallow the terminator.
+      --  A blank node label is narrower still: it admits neither percent
+      --  nor backslash escapes, so for one those characters end the label
+      --  rather than continue it.
       procedure Scan_Local_Name (Blank_Label : Boolean := False);
 
       procedure Scan_Local_Name (Blank_Label : Boolean := False) is
@@ -566,7 +569,9 @@ package body Flyology_RDF.Lexers is
                return;
             end if;
 
-            if Scalar = 16#25# then           --  percent escape
+            if Scalar = 16#25#                --  percent escape
+              and then not Blank_Label
+            then
                declare
                   Saved_Position : constant Cursors.Cursor_State :=
                     Walk_Position;
@@ -608,7 +613,9 @@ package body Flyology_RDF.Lexers is
                   Append_Scalar (Buffer, High);
                   Append_Scalar (Buffer, Low);
                end;
-            elsif Scalar = 16#5C# then        --  reserved-character escape
+            elsif Scalar = 16#5C#             --  reserved-character escape
+              and then not Blank_Label
+            then
                declare
                   Escaped        : Scalar_Value;
                   Escaped_Length : Natural;
@@ -644,6 +651,11 @@ package body Flyology_RDF.Lexers is
                Append_Scalar (Buffer, Scalar);
                Step (Scalar, Length);
             elsif Scalar = 16#2E# then        --  '.' only if not final
+               --  Nor may a dot open the name: the run so far is complete
+               --  without it, and the dot belongs to the grammar.
+               if First then
+                  exit;
+               end if;
                Append_Scalar (Buffer, Scalar);
                Step (Scalar, Length);
                First := False;
@@ -718,9 +730,13 @@ package body Flyology_RDF.Lexers is
                   return;
                end if;
 
-               if Next in 16#65# | 16#45# then
+               if Next in 16#65# | 16#45#
+                 and then Digits_Before > 0
+               then
                   --  A dot with an exponent behind it and no digits
-                  --  between: still one number.
+                  --  between: still one number -- but only when digits
+                  --  precede the dot, or ".e0" would become a double the
+                  --  grammar does not admit.
                   Is_Decimal := True;
                   Append_Scalar (Buffer, 16#2E#);
                   Scalar := Next;
@@ -859,46 +875,50 @@ package body Flyology_RDF.Lexers is
          --  '@prefix' and '@base' are directives rather than language tags.
          --  The text is retained so that a parser expecting a language tag
          --  after a literal can still read them as one, which the grammar
-         --  permits.
-         declare
-            Word : constant String := Unbounded.To_String (Buffer);
-         begin
-            if Word = "prefix" then
-               Emit (Prefix_Directive_Token);
-               return;
-            elsif Word = "base" then
-               Emit (Base_Directive_Token);
-               return;
-            elsif Word = "version" then
-               --  Turtle 1.2 has both "@version" and the keyword form.
-               --  Marking which was written lets the grammar require the
-               --  terminator that only the at-form carries.
-               Buffer := Unbounded.To_Unbounded_String ("@version");
-               Emit (Version_Directive_Token);
-               return;
-            elsif Dialect = N3_Dialect
-              and then Word in "true" | "false"
-            then
-               --  N3 spells several keywords with a leading at-sign, and
-               --  they mean what the bare words mean.
-               Emit (Boolean_Token);
-               return;
-            elsif Dialect = N3_Dialect and then Word = "a" then
-               Emit (A_Token);
-               return;
-            elsif Dialect = N3_Dialect
-              and then Word in "is" | "of" | "has"
-            then
-               Emit (Keyword_Token);
-               return;
-            elsif Dialect = N3_Dialect and then Word = "forAll" then
-               Emit (For_All_Token);
-               return;
-            elsif Dialect = N3_Dialect and then Word = "forSome" then
-               Emit (For_Some_Token);
-               return;
-            end if;
-         end;
+         --  permits. A hyphen after the word means the tag continues --
+         --  "@prefix-de" is a language tag, not a directive -- so the
+         --  directive reading applies only when the word stands alone.
+         if Scalar /= 16#2D# then
+            declare
+               Word : constant String := Unbounded.To_String (Buffer);
+            begin
+               if Word = "prefix" then
+                  Emit (Prefix_Directive_Token);
+                  return;
+               elsif Word = "base" then
+                  Emit (Base_Directive_Token);
+                  return;
+               elsif Word = "version" then
+                  --  Turtle 1.2 has both "@version" and the keyword form.
+                  --  Marking which was written lets the grammar require the
+                  --  terminator that only the at-form carries.
+                  Buffer := Unbounded.To_Unbounded_String ("@version");
+                  Emit (Version_Directive_Token);
+                  return;
+               elsif Dialect = N3_Dialect
+                 and then Word in "true" | "false"
+               then
+                  --  N3 spells several keywords with a leading at-sign, and
+                  --  they mean what the bare words mean.
+                  Emit (Boolean_Token);
+                  return;
+               elsif Dialect = N3_Dialect and then Word = "a" then
+                  Emit (A_Token);
+                  return;
+               elsif Dialect = N3_Dialect
+                 and then Word in "is" | "of" | "has"
+               then
+                  Emit (Keyword_Token);
+                  return;
+               elsif Dialect = N3_Dialect and then Word = "forAll" then
+                  Emit (For_All_Token);
+                  return;
+               elsif Dialect = N3_Dialect and then Word = "forSome" then
+                  Emit (For_Some_Token);
+                  return;
+               end if;
+            end;
+         end if;
 
          loop
             Peek_Token_End (Walk_Index, Scalar, Length, Look);
@@ -1128,7 +1148,9 @@ package body Flyology_RDF.Lexers is
                     or else Cursors.Is_Line_Break (Scalar);
                end loop;
 
-               if Look = Bad then
+               if Look = Bad
+                 or else (Look = Partial and then Last_Chunk)
+               then
                   Position := Walk_Position;
                   Index := Walk_Index;
                   Fail (Invalid_Encoding);
@@ -1166,7 +1188,13 @@ package body Flyology_RDF.Lexers is
             Status := End_Of_Input;
             return;
          when Partial =>
-            Status := Needs_More_Input;
+            if Last_Chunk then
+               --  The buffer ends inside a multi-byte sequence that no
+               --  further input can complete.
+               Fail (Invalid_Encoding);
+            else
+               Status := Needs_More_Input;
+            end if;
             return;
          when Bad =>
             Fail (Invalid_Encoding);
@@ -1328,6 +1356,14 @@ package body Flyology_RDF.Lexers is
             Step (Scalar, Length);
             Scan_Local_Name (Blank_Label => True);
             if Status = Token_Found then
+               if Dialect /= N3_Dialect
+                 and then Unbounded.Length (Result.Text_Value) = 0
+               then
+                  --  "_:" with no label character names nothing -- except
+                  --  in N3, which reads it as an unnamed existential.
+                  Fail (Unexpected_Character);
+                  return;
+               end if;
                Result.Kind_Value := Blank_Label_Token;
                Result.Prefix_Value := Unbounded.Null_Unbounded_String;
             end if;
@@ -1540,6 +1576,14 @@ package body Flyology_RDF.Lexers is
                      Fail (Invalid_Encoding);
                      return;
                   end if;
+                  --  SPARQL's VARNAME is narrower than a name run: no
+                  --  hyphen anywhere -- "?a-?b" is a subtraction -- and
+                  --  the first character is a name character or a digit.
+                  exit when Dialect = SPARQL_Dialect
+                    and then (Scalar = 16#2D#
+                              or else (Length_Seen = 0
+                                       and then not Is_PN_Chars_U (Scalar)
+                                       and then not Is_Digit (Scalar)));
                   exit when not Is_PN_Chars (Scalar);
                   Append_Scalar (Buffer, Scalar);
                   Step (Scalar, Length);

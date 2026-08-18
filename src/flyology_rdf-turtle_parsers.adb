@@ -187,6 +187,7 @@ package body Flyology_RDF.Turtle_Parsers is
                  "b" & Image (Image'First + 1 .. Image'Last);
             begin
                if not Into.Document_Labels.Contains (Label) then
+                  Into.Generated_Labels.Include (Label);
                   return Unbounded.To_String (Into.Blank_Prefix) & Label;
                end if;
             end;
@@ -198,8 +199,25 @@ package body Flyology_RDF.Turtle_Parsers is
       --  this crate's own output rename every node, and rename it again on
       --  the next pass, so labels would grow without bound instead of
       --  reaching a fixed point.
+      --
+      --  The one exception is a label a generated node has already taken:
+      --  that node is in statements already emitted, and sharing its label
+      --  would merge two nodes the document keeps distinct, so the
+      --  document's label is renamed instead -- consistently, so its later
+      --  occurrences name the same node.
       function Document_Blank_Label (Raw : String) return String is
       begin
+         if Into.Renamed_Labels.Contains (Raw) then
+            return Into.Renamed_Labels.Element (Raw);
+         end if;
+         if Into.Generated_Labels.Contains (Raw) then
+            declare
+               Replacement : constant String := Fresh_Blank_Label;
+            begin
+               Into.Renamed_Labels.Insert (Raw, Replacement);
+               return Replacement;
+            end;
+         end if;
          if not Into.Document_Labels.Contains (Raw) then
             Into.Document_Labels.Insert (Raw);
          end if;
@@ -416,6 +434,13 @@ package body Flyology_RDF.Turtle_Parsers is
          Expect (Lexers.Close_Triple_Term_Token, Triple_Term_Production);
          Depth := Depth - 1;
          return Terms.Triple_Term (Subject, Predicate, Object);
+      exception
+         when Terms.Term_Limit_Error =>
+            --  The term model bounds nesting and payload on its own; a
+            --  caller who raises Maximum_Nesting past those bounds gets a
+            --  diagnostic here rather than an exception.
+            Reject (Nesting_Limit, Triple_Term_Production);
+            raise Grammar_Error;
       end Parse_Triple_Term;
 
       --  A reifier names the reifying node; an absent one gets a fresh
@@ -532,6 +557,10 @@ package body Flyology_RDF.Turtle_Parsers is
          Emit (Node, IRIs.From_UTF_8 (RDF_Reifies),
                Terms.Triple_Term (Subject, Predicate, Object), Where);
          return Node;
+      exception
+         when Terms.Term_Limit_Error =>
+            Reject (Nesting_Limit, Statement_Production);
+            raise Grammar_Error;
       end Parse_Reified_Triple;
 
       function Parse_Literal return Terms.Term;
@@ -605,6 +634,14 @@ package body Flyology_RDF.Turtle_Parsers is
                Reject (Malformed_Syntax, Literal_Production);
          end case;
          raise Grammar_Error;
+      exception
+         when Terms.Invalid_Literal | Terms.Invalid_Language_Tag =>
+            --  Grammar-shaped tokens can still name a literal the model
+            --  refuses: a language tag outside the well-formed shape, or
+            --  rdf:langString written as an explicit datatype. Both are
+            --  rejections of the document, not failures of the parser.
+            Reject (Malformed_Syntax, Literal_Production);
+            raise Grammar_Error;
       end Parse_Literal;
 
       function Parse_Object_Term return Terms.Term is
@@ -927,13 +964,20 @@ package body Flyology_RDF.Turtle_Parsers is
             end case;
          end Line_Term;
 
+         function Line_Predicate return IRIs.IRI;
+
+         function Line_Predicate return IRIs.IRI is
+         begin
+            if Peek_Kind /= Lexers.IRI_Reference_Token then
+               Reject (Malformed_Syntax, Predicate_Production);
+            end if;
+            return Absolute (Predicate_Production);
+         end Line_Predicate;
+
          Where     : constant Source_Span := Token_Span (Current);
          Subject   : constant Terms.Term :=
            Line_Term (Subject_Production, Allow_Literal => False);
-         Predicate : constant IRIs.IRI :=
-           (if Peek_Kind = Lexers.IRI_Reference_Token
-            then Absolute (Predicate_Production)
-            else raise Grammar_Error);
+         Predicate : constant IRIs.IRI := Line_Predicate;
          Object    : constant Terms.Term :=
            Line_Term (Object_Production, Allow_Literal => True);
       begin
@@ -1052,6 +1096,10 @@ package body Flyology_RDF.Turtle_Parsers is
             if Into.Syntax_Data = Turtle_Syntax then
                Reject (Unsupported_Production, Graph_Block_Production);
             end if;
+            if Into.In_Graph_Block then
+               --  Graph blocks do not nest.
+               Reject (Malformed_Syntax, Graph_Block_Production);
+            end if;
             declare
                Where : constant Source_Span := Token_Span (Current);
             begin
@@ -1104,6 +1152,10 @@ package body Flyology_RDF.Turtle_Parsers is
             if Into.Syntax_Data = Turtle_Syntax then
                Reject (Unsupported_Production, Graph_Block_Production);
             end if;
+            if Into.In_Graph_Block then
+               --  Graph blocks do not nest.
+               Reject (Malformed_Syntax, Graph_Block_Production);
+            end if;
             Advance;
             Into.Graph_Is_Named := False;
             Into.Graph_Is_Blank := False;
@@ -1134,6 +1186,10 @@ package body Flyology_RDF.Turtle_Parsers is
                --  A labelled graph block, written without the keyword.
                if Into.Syntax_Data /= TriG_Syntax then
                   Reject (Unsupported_Production, Graph_Block_Production);
+               end if;
+               if Into.In_Graph_Block then
+                  --  Graph blocks do not nest.
+                  Reject (Malformed_Syntax, Graph_Block_Production);
                end if;
                declare
                   Where : constant Source_Span := Token_Span (Current);
@@ -1190,6 +1246,13 @@ package body Flyology_RDF.Turtle_Parsers is
 
    exception
       when Grammar_Error =>
+         Failed := True;
+      when Terms.Invalid_Term | Terms.Invalid_Literal
+         | Terms.Invalid_Language_Tag | Terms.Term_Limit_Error
+         | IRIs.Invalid_IRI | IRIs.Invalid_UTF_8 =>
+         --  A term the model refuses on a path the wrappers above missed.
+         --  The pre-initialised diagnostic carries no precise span, but an
+         --  escaped exception would abandon the parse state entirely.
          Failed := True;
    end Parse_Statement;
 
@@ -1371,6 +1434,11 @@ package body Flyology_RDF.Turtle_Parsers is
                end if;
 
             when Lexers.Needs_More_Input =>
+               if Ended then
+                  --  The scanner wants bytes that will never arrive, so
+                  --  the document ends inside a token.
+                  Report (Malformed_Syntax, To_Span (Position, Position));
+               end if;
                exit;
 
             when Lexers.End_Of_Input =>
@@ -1396,6 +1464,13 @@ package body Flyology_RDF.Turtle_Parsers is
       Into.Work_Data.Maximum_Pending_Bytes :=
         Natural'Max (Into.Work_Data.Maximum_Pending_Bytes,
                      Unbounded.Length (Into.Pending));
+   exception
+      when others =>
+         --  A sink callback raising must poison the parse, as the spec
+         --  promises: the statement in flight was partially delivered,
+         --  and replaying it on the next Feed would emit it twice.
+         Into.Failed := True;
+         raise;
    end Deliver;
 
    procedure Feed

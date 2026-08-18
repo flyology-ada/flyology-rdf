@@ -22,6 +22,27 @@ package body Flyology_SPARQL.Writers is
 
       function Render (Node : Syntax.Node_Reference) return String;
 
+      procedure Write_Group
+        (Node : Syntax.Node_Reference; Depth : Natural);
+
+      --  Render a group to text through the shared pattern writer, so the
+      --  one pattern an expression can hold -- an EXISTS body -- writes
+      --  the same way as any other group.
+      function Group_Image (Node : Syntax.Node_Reference) return String;
+
+      function Group_Image (Node : Syntax.Node_Reference) return String is
+         Mark : constant Natural := Unbounded.Length (Buffer);
+      begin
+         Write_Group (Node, 0);
+         declare
+            Image : constant String :=
+              Unbounded.Slice (Buffer, Mark + 1, Unbounded.Length (Buffer));
+         begin
+            Unbounded.Delete (Buffer, Mark + 1, Unbounded.Length (Buffer));
+            return Image;
+         end;
+      end Group_Image;
+
       function Children_From
         (Node      : Syntax.Node_Reference;
          First     : Positive;
@@ -122,8 +143,46 @@ package body Flyology_SPARQL.Writers is
                if Syntax.Child_Count (Value, Node) = 0 then
                   return Syntax.Text (Value, Node);
                end if;
-               return Syntax.Text (Value, Node) & "("
-                 & Children_Of (Node, ", ") & ")";
+               --  DISTINCT and SEPARATOR ride along as marker children;
+               --  writing them as arguments would not read back.
+               declare
+                  Header    : Unbounded.Unbounded_String;
+                  Arguments : Unbounded.Unbounded_String;
+                  Trailer   : Unbounded.Unbounded_String;
+                  Written   : Natural := 0;
+               begin
+                  for Index in 1 .. Syntax.Child_Count (Value, Node) loop
+                     declare
+                        Item : constant Syntax.Node_Reference :=
+                          Syntax.Child (Value, Node, Index);
+                        Mark : constant Boolean :=
+                          Syntax.Kind (Value, Item) = Syntax.Call_Node
+                          and then Syntax.Text (Value, Item)
+                                   in "DISTINCT" | "SEPARATOR";
+                     begin
+                        if Mark
+                          and then Syntax.Text (Value, Item) = "DISTINCT"
+                        then
+                           Unbounded.Append (Header, "DISTINCT ");
+                        elsif Mark then
+                           Unbounded.Append
+                             (Trailer,
+                              "; SEPARATOR = "
+                              & Render (Syntax.Child (Value, Item, 1)));
+                        else
+                           Written := Written + 1;
+                           if Written > 1 then
+                              Unbounded.Append (Arguments, ", ");
+                           end if;
+                           Unbounded.Append (Arguments, Render (Item));
+                        end if;
+                     end;
+                  end loop;
+                  return Syntax.Text (Value, Node) & "("
+                    & Unbounded.To_String (Header)
+                    & Unbounded.To_String (Arguments)
+                    & Unbounded.To_String (Trailer) & ")";
+               end;
 
             when Syntax.Order_Term_Node =>
                if Syntax.Text (Value, Node) = "" then
@@ -159,7 +218,8 @@ package body Flyology_SPARQL.Writers is
                  & Render (Syntax.Child (Value, Node, 1));
 
             when Syntax.Exists_Node =>
-               return Syntax.Text (Value, Node) & " { }";
+               return Syntax.Text (Value, Node) & " "
+                 & Group_Image (Syntax.Child (Value, Node, 1));
 
             when Syntax.Projection_Node =>
                if Syntax.Text (Value, Node) = "AS" then
@@ -175,7 +235,8 @@ package body Flyology_SPARQL.Writers is
 
       procedure Write_Pattern (Node : Syntax.Node_Reference; Depth : Natural);
 
-      procedure Write_Group (Node : Syntax.Node_Reference; Depth : Natural) is
+      procedure Write_Group
+        (Node : Syntax.Node_Reference; Depth : Natural) is
       begin
          Put ("{" & (1 => ASCII.LF));
          for Index in 1 .. Syntax.Child_Count (Value, Node) loop
@@ -264,7 +325,27 @@ package body Flyology_SPARQL.Writers is
                end;
 
             when Syntax.Reified_Node =>
-               Put (Indent (Depth) & Render (Node) & " ." & (1 => ASCII.LF));
+               if Syntax.Text (Value, Node) = "annotation" then
+                  --  The marker holds the annotated triple and its
+                  --  reifier. The triple was already written on its own
+                  --  line, so what remains to state is the reification,
+                  --  and a reified triple is exactly that statement --
+                  --  which is what the annotation form abbreviates.
+                  declare
+                     Triple : constant Syntax.Node_Reference :=
+                       Syntax.Child (Value, Node, 1);
+                  begin
+                     Put (Indent (Depth) & "<< "
+                          & Render (Syntax.Child (Value, Triple, 1)) & " "
+                          & Render (Syntax.Child (Value, Triple, 2)) & " "
+                          & Render (Syntax.Child (Value, Triple, 3))
+                          & " ~" & Render (Syntax.Child (Value, Node, 2))
+                          & " >> ." & (1 => ASCII.LF));
+                  end;
+               else
+                  Put (Indent (Depth) & Render (Node) & " ."
+                       & (1 => ASCII.LF));
+               end if;
 
             when Syntax.Values_Node =>
                Put (Indent (Depth) & "VALUES ("
@@ -308,6 +389,8 @@ package body Flyology_SPARQL.Writers is
                                    & Render (Syntax.Child (Value, Item, 1))
                                    & (1 => ASCII.LF));
                            end if;
+                        when Syntax.Values_Node =>
+                           Write_Pattern (Item, Depth + 1);
                         when others =>
                            null;
                      end case;

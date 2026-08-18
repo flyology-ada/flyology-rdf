@@ -383,6 +383,27 @@ begin
             /= Terms.Language_Literal ("x", "en"),
           "direction participates in equality");
 
+   ------------------------------------------------------------------
+   --  Regressions: defects found by review, kept fixed
+   ------------------------------------------------------------------
+   Check (IRIs.To_UTF_8
+            (Terms.Datatype
+               (Terms.Directional_Literal ("x", "en", Terms.Left_To_Right)))
+          = "http://www.w3.org/1999/02/22-rdf-syntax-ns#dirLangString",
+          "a directional literal's datatype is rdf:dirLangString");
+
+   begin
+      declare
+         Ignored : constant Terms.Term := Terms.Language_Literal ("x", "a1");
+         pragma Unreferenced (Ignored);
+      begin
+         Check (False, "a digit in the first subtag must be rejected");
+      end;
+   exception
+      when Terms.Invalid_Language_Tag =>
+         Check (True, "a digit in the first subtag rejected");
+   end;
+
    IO.Put_Line ("  checks              " & Checks'Image);
    IO.Put_Line ("  failures            " & Failures'Image);
 

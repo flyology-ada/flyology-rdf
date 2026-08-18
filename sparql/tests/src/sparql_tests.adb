@@ -6,6 +6,7 @@
 --  agree on a second pass, the tree survived the trip.
 
 with Ada.Command_Line;
+with Ada.Strings.Unbounded;
 with Ada.Text_IO;
 with Flyology_SPARQL.Parsers;
 with Flyology_SPARQL.Syntax;
@@ -274,6 +275,104 @@ begin
                   "an update, which this crate does not parse");
    Check_Rejects ("SELECT * WHERE { ?s ?p ?o } EXTRA",
                   "trailing input after the query");
+
+   ------------------------------------------------------------------
+   --  Regressions: defects found by review, kept fixed
+   ------------------------------------------------------------------
+
+   --  The additive continuations interleave, and a signed literal takes
+   --  multiplicative continuations of its own.
+   Check_Round_Trip ("SELECT * WHERE { FILTER(?x - 1 +2 = 0) }",
+                     "an operator step then a signed-literal step");
+   Check_Round_Trip ("SELECT * WHERE { FILTER(?x+1*2 = 3) }",
+                     "a product after a signed literal");
+
+   --  VARNAME admits no hyphen, so "?a-?b" is a subtraction.
+   Check_Round_Trip ("SELECT * WHERE { FILTER(?a-?b = 0) }",
+                     "a subtraction written without spaces");
+
+   --  LIMIT and OFFSET take the unsigned INTEGER terminal.
+   Check_Rejects ("SELECT * WHERE { ?s ?p ?o } LIMIT -1",
+                  "a signed limit");
+   Check_Rejects ("SELECT * WHERE { ?s ?p ?o } LIMIT 99999999999999999999",
+                  "a limit past the implementation");
+   Check_Rejects
+     ("SELECT * WHERE { { SELECT ?a WHERE { ?a ?p ?b } LIMIT ?a } }",
+      "a variable as a subquery limit");
+
+   --  Subquery modifiers are the query's own, read by the same routines.
+   Check_Round_Trip
+     ("SELECT * WHERE { { SELECT ?a ?b WHERE { ?a ?p ?b }"
+      & " GROUP BY ?a ?b } }",
+      "a subquery grouping by two keys");
+   Check_Round_Trip
+     ("SELECT * WHERE { { SELECT ?a WHERE { ?a ?p ?b }"
+      & " VALUES ?a { 1 2 } } }",
+      "a subquery closed by inline data");
+   Check_Round_Trip
+     ("SELECT ?s WHERE { ?s ?p ?o } GROUP BY ?s"
+      & " HAVING (COUNT(?o) > 1) (COUNT(?o) < 5)",
+      "two HAVING constraints");
+   Check_Round_Trip
+     ("SELECT ?s WHERE { ?s ?p ?o } GROUP BY ?s VALUES ?s { <http://x> }",
+      "inline data after a GROUP BY");
+   Check_Round_Trip
+     ("DESCRIBE <http://x> VALUES ?v { 1 }",
+      "inline data on a DESCRIBE without WHERE");
+
+   --  An EXISTS body, an annotation, and a reifier survive writing.
+   Check_Round_Trip ("SELECT * WHERE { FILTER EXISTS { ?s ?p ?o } }",
+                     "an EXISTS body");
+   Check_Round_Trip
+     ("SELECT * WHERE { FILTER NOT EXISTS { ?s ?p ?o . FILTER(?o > 2) } }",
+      "a NOT EXISTS body with a nested constraint");
+   Check_Round_Trip ("SELECT * WHERE { ?s ?p ?o {| ?a ?b |} }",
+                     "an annotation block");
+   Check_Round_Trip ("SELECT * WHERE { ?s ?p ?o ~ ?r . }",
+                     "a bare reifier");
+
+   --  A generated node is known by its mark, so a document label that
+   --  merely looks like one is still checked across groups.
+   Check_Rejects ("SELECT * WHERE { { _:gx ?p 1 } { _:gx ?p 2 } }",
+                  "a g-spelled label shared between groups");
+
+   --  Projections, DESCRIBE targets and keyword calls are narrower than
+   --  the term and expression grammars they sit inside.
+   Check_Rejects ("SELECT <http://x> WHERE { ?s ?p ?o }",
+                  "an IRI in a projection");
+   Check_Rejects ("SELECT ""lit"" WHERE { ?s ?p ?o }",
+                  "a literal in a projection");
+   Check_Rejects ("DESCRIBE ""lit""",
+                  "a literal as a DESCRIBE target");
+   Check_Rejects ("SELECT * WHERE { FILTER(FOO(?x)) }",
+                  "a bare word is not a function name");
+   Check_Rejects ("SELECT * WHERE { FILTER(RAND) }",
+                  "a built-in without its argument list");
+
+   --  The aggregate markers write back as the syntax they abbreviate.
+   Check_Round_Trip
+     ("SELECT (COUNT(DISTINCT *) AS ?n) WHERE { ?s ?p ?o }",
+      "a DISTINCT aggregate");
+   Check_Round_Trip
+     ("SELECT (GROUP_CONCAT(DISTINCT ?x; SEPARATOR = "", "") AS ?g)"
+      & " WHERE { ?s ?p ?x } GROUP BY ?s",
+      "GROUP_CONCAT with a separator");
+
+   --  Nesting is bounded, so a query of open braces cannot exhaust the
+   --  stack.
+   declare
+      package SU renames Ada.Strings.Unbounded;
+      Deep : SU.Unbounded_String;
+   begin
+      SU.Append (Deep, "SELECT * WHERE ");
+      for Ignored in 1 .. 60_000 loop
+         SU.Append (Deep, "{");
+      end loop;
+      for Ignored in 1 .. 60_000 loop
+         SU.Append (Deep, "}");
+      end loop;
+      Check_Rejects (SU.To_String (Deep), "unbounded group nesting");
+   end;
 
    IO.Put_Line ("  checks              " & Checks'Image);
    IO.Put_Line ("  failures            " & Failures'Image);

@@ -8,6 +8,7 @@
 --  what forces the expensive path to be exercised rather than skipped.
 
 with Ada.Command_Line;
+with Ada.Containers;
 with Ada.Strings.Unbounded;
 with Ada.Text_IO;
 with Flyology_RDF.Canonicalization;
@@ -275,6 +276,26 @@ begin
       when Canon.Work_Limit_Error =>
          Raised := True;
          Check (Raised, "the function form raises at the bound");
+   end;
+
+   ------------------------------------------------------------------
+   --  Regressions: defects found by review, kept fixed
+   ------------------------------------------------------------------
+
+   --  Out mode hands over the caller's map, so a reused variable must
+   --  not accumulate a previous canonicalization's entries.
+   declare
+      Data   : constant Datasets.Dataset :=
+        Load ("_:a " & P & " _:b ." & NL);
+      Output : Unbounded.Unbounded_String;
+      Labels : Canon.Label_Maps.Map;
+      Status : Canon.Result_Status;
+      use type Ada.Containers.Count_Type;
+   begin
+      Canon.Canonicalize (Data, Output, Labels, Status);
+      Canon.Canonicalize (Data, Output, Labels, Status);
+      Check (Status = Canon.Canonicalized and then Labels.Length = 2,
+             "a reused label map is cleared on entry");
    end;
 
    IO.Put_Line ("  checks              " & Checks'Image);

@@ -324,6 +324,55 @@ begin
          Check (Refused, "Turtle refuses a dataset with a named graph");
    end;
 
+   ------------------------------------------------------------------
+   --  Regressions: defects found by review, kept fixed
+   ------------------------------------------------------------------
+
+   --  Rebinding a prefix must replace its earlier namespace: keeping
+   --  both writes two @prefix declarations for one prefix, and every
+   --  name abbreviated against the first reads back against the second.
+   declare
+      Source : constant String :=
+        "<http://one.example/s> <http://two.example/p> "
+        & "<http://x.example/o> ." & ASCII.LF;
+      Prefixes : Writers.Prefix_Map := Writers.No_Prefixes;
+      First, Second : Datasets.Dataset;
+      Ok : Boolean;
+      Ignored : Parsers.Diagnostic_Code;
+   begin
+      Writers.Bind (Prefixes, "p", "http://one.example/");
+      Writers.Bind (Prefixes, "p", "http://two.example/");
+
+      Load (Source, Parsers.NTriples_Syntax, First, Ok, Ignored);
+      Check (Ok, "the rebinding source parses");
+      Load (Writers.To_Turtle (First, Prefixes), Parsers.Turtle_Syntax,
+            Second, Ok, Ignored);
+      Check (Ok, "output after a prefix rebinding parses back");
+      Check (First = Second, "a rebound prefix does not corrupt names");
+   end;
+
+   --  A local name the byte-level check cannot prove legal -- a leading
+   --  hyphen, or anything beyond ASCII -- is written as a full IRI.
+   declare
+      Source : constant String :=
+        "<http://example.org/-a> <http://example.org/p> "
+        & "<http://example.org/" & Character'Val (16#C3#)
+        & Character'Val (16#97#) & "x> ." & ASCII.LF;
+      Prefixes : Writers.Prefix_Map := Writers.No_Prefixes;
+      First, Second : Datasets.Dataset;
+      Ok : Boolean;
+      Ignored : Parsers.Diagnostic_Code;
+   begin
+      Writers.Bind (Prefixes, "e", "http://example.org/");
+
+      Load (Source, Parsers.NTriples_Syntax, First, Ok, Ignored);
+      Check (Ok, "the unsafe-local source parses");
+      Load (Writers.To_Turtle (First, Prefixes), Parsers.Turtle_Syntax,
+            Second, Ok, Ignored);
+      Check (Ok, "unsafe local names parse back");
+      Check (First = Second, "unsafe local names are written in full");
+   end;
+
    IO.Put_Line ("  checks              " & Checks'Image);
    IO.Put_Line ("  failures            " & Failures'Image);
 

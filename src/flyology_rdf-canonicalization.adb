@@ -582,6 +582,10 @@ package body Flyology_RDF.Canonicalization is
 
    begin
       Output := Unbounded.Null_Unbounded_String;
+      --  Out mode hands over the caller's existing map rather than an
+      --  empty one, so a map reused across calls must be cleared here or
+      --  it would accumulate a previous canonicalization's entries.
+      Labels := Label_Maps.Empty_Map;
       Status := Canonicalized;
 
       Datasets.Iterate (Value, Note'Access);

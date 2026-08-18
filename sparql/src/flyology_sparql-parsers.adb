@@ -78,6 +78,27 @@ package body Flyology_SPARQL.Parsers is
          return False;
       end Take_Keyword;
 
+      --  The functions the grammar names by keyword: the aggregates and
+      --  the built-in calls. Any other function is named by an IRI, so a
+      --  bare word followed by an argument list is not a call at all.
+      function Is_Builtin (Word : String) return Boolean
+      is (Upper (Word) in
+            "COUNT" | "SUM" | "MIN" | "MAX" | "AVG" | "SAMPLE"
+          | "GROUP_CONCAT"
+          | "STR" | "LANG" | "LANGMATCHES" | "LANGDIR" | "DATATYPE"
+          | "BOUND" | "IRI" | "URI" | "BNODE" | "RAND" | "ABS" | "CEIL"
+          | "FLOOR" | "ROUND" | "CONCAT" | "SUBSTR" | "STRLEN" | "REPLACE"
+          | "UCASE" | "LCASE" | "ENCODE_FOR_URI" | "CONTAINS"
+          | "STRSTARTS" | "STRENDS" | "STRBEFORE" | "STRAFTER"
+          | "YEAR" | "MONTH" | "DAY" | "HOURS" | "MINUTES" | "SECONDS"
+          | "TIMEZONE" | "TZ" | "NOW" | "UUID" | "STRUUID"
+          | "MD5" | "SHA1" | "SHA256" | "SHA384" | "SHA512"
+          | "COALESCE" | "IF" | "STRLANG" | "STRLANGDIR" | "STRDT"
+          | "SAMETERM" | "ISIRI" | "ISURI" | "ISBLANK" | "ISLITERAL"
+          | "ISNUMERIC" | "REGEX"
+          | "ISTRIPLE" | "TRIPLE" | "SUBJECT" | "PREDICATE" | "OBJECT"
+          | "HASLANG" | "HASLANGDIR");
+
       --  The words that begin a pattern item rather than continue the
       --  triples before it. Asked in exactly one place, because a test
       --  written out longhand compares token kinds and so cannot see the
@@ -103,6 +124,28 @@ package body Flyology_SPARQL.Parsers is
          end if;
       end Expect_Keyword;
 
+      --  Descent depth across groups, bracketed expressions, paths and
+      --  pattern terms. Without a bound, a query that is nothing but open
+      --  braces exhausts the stack before any grammar rule can refuse it.
+      Maximum_Nesting : constant := 128;
+      Depth           : Natural := 0;
+
+      procedure Enter_Nesting;
+      procedure Leave_Nesting;
+
+      procedure Enter_Nesting is
+      begin
+         Depth := Depth + 1;
+         if Depth > Maximum_Nesting then
+            Fail ("nesting exceeds the maximum depth");
+         end if;
+      end Enter_Nesting;
+
+      procedure Leave_Nesting is
+      begin
+         Depth := Depth - 1;
+      end Leave_Nesting;
+
       function Node
         (Variant : Syntax.Node_Kind;
          Text    : String := "";
@@ -120,7 +163,8 @@ package body Flyology_SPARQL.Parsers is
             Image : constant String := Natural'Image (Blank_Counter);
          begin
             return Node (Syntax.Blank_Node,
-                         "g" & Image (Image'First + 1 .. Image'Last));
+                         "g" & Image (Image'First + 1 .. Image'Last),
+                         Detail => "generated");
          end;
       end Fresh_Blank;
 
@@ -212,6 +256,7 @@ package body Flyology_SPARQL.Parsers is
                --  nothing and needs no group to state it into. That is
                --  what lets it be an ordinary term.
                Advance;
+               Enter_Nesting;
                declare
                   Result : constant Syntax.Node_Reference :=
                     Node (Syntax.Triple_Term_Node);
@@ -238,6 +283,7 @@ package body Flyology_SPARQL.Parsers is
                   end loop;
                   Expect (Lexers.Close_Triple_Term_Token,
                           "a triple term terminator");
+                  Leave_Nesting;
                   return Result;
                end;
 
@@ -255,10 +301,12 @@ package body Flyology_SPARQL.Parsers is
       begin
          if Peek = Lexers.Open_Paren_Token then
             Advance;
+            Enter_Nesting;
             declare
                Inner : constant Syntax.Node_Reference := Parse_Expression;
             begin
                Expect (Lexers.Close_Paren_Token, "a closing parenthesis");
+               Leave_Nesting;
                return Inner;
             end;
          end if;
@@ -293,43 +341,50 @@ package body Flyology_SPARQL.Parsers is
                Name   : constant String := Lexers.Text (Current);
                Result : Syntax.Node_Reference;
             begin
+               if not Is_Builtin (Name) then
+                  Fail ("a function is named by an IRI or is one the"
+                        & " language defines");
+               end if;
                Advance;
                Result := Node (Syntax.Call_Node, Name);
-               if Peek = Lexers.Open_Paren_Token then
-                  Advance;
-                  if Take_Keyword ("DISTINCT") then
-                     Syntax.Add_Child
-                       (Tree, Result, Node (Syntax.Call_Node, "DISTINCT"));
-                  end if;
-                  if Peek = Lexers.Star_Token then
-                     --  COUNT(*), with or without the DISTINCT above it.
-                     Advance;
-                     Syntax.Add_Child
-                       (Tree, Result, Node (Syntax.Variable_Node, "*"));
-                  elsif Peek /= Lexers.Close_Paren_Token then
-                     loop
-                        Syntax.Add_Child (Tree, Result, Parse_Expression);
-                        exit when Peek /= Lexers.Comma_Token;
-                        Advance;
-                     end loop;
-                     if Peek = Lexers.Semicolon_Token then
-                        --  GROUP_CONCAT(?x ; SEPARATOR = ", ")
-                        Advance;
-                        Expect_Keyword ("SEPARATOR");
-                        Expect (Lexers.Equals_Token, "an equals sign");
-                        declare
-                           Separator : constant Syntax.Node_Reference :=
-                             Node (Syntax.Call_Node, "SEPARATOR");
-                        begin
-                           Syntax.Add_Child
-                             (Tree, Separator, Parse_Term);
-                           Syntax.Add_Child (Tree, Result, Separator);
-                        end;
-                     end if;
-                  end if;
-                  Expect (Lexers.Close_Paren_Token,
-                          "a closing parenthesis");
+               if Peek /= Lexers.Open_Paren_Token then
+                  --  Every function of the language takes an argument
+                  --  list; a bare word is not an expression.
+                  Fail ("a call takes an argument list");
                end if;
+               Advance;
+               if Take_Keyword ("DISTINCT") then
+                  Syntax.Add_Child
+                    (Tree, Result, Node (Syntax.Call_Node, "DISTINCT"));
+               end if;
+               if Peek = Lexers.Star_Token then
+                  --  COUNT(*), with or without the DISTINCT above it.
+                  Advance;
+                  Syntax.Add_Child
+                    (Tree, Result, Node (Syntax.Variable_Node, "*"));
+               elsif Peek /= Lexers.Close_Paren_Token then
+                  loop
+                     Syntax.Add_Child (Tree, Result, Parse_Expression);
+                     exit when Peek /= Lexers.Comma_Token;
+                     Advance;
+                  end loop;
+                  if Peek = Lexers.Semicolon_Token then
+                     --  GROUP_CONCAT(?x ; SEPARATOR = ", ")
+                     Advance;
+                     Expect_Keyword ("SEPARATOR");
+                     Expect (Lexers.Equals_Token, "an equals sign");
+                     declare
+                        Separator : constant Syntax.Node_Reference :=
+                          Node (Syntax.Call_Node, "SEPARATOR");
+                     begin
+                        Syntax.Add_Child
+                          (Tree, Separator, Parse_Term);
+                        Syntax.Add_Child (Tree, Result, Separator);
+                     end;
+                  end if;
+               end if;
+               Expect (Lexers.Close_Paren_Token,
+                       "a closing parenthesis");
                return Result;
             end;
          end if;
@@ -384,8 +439,10 @@ package body Flyology_SPARQL.Parsers is
                Result : Syntax.Node_Reference;
             begin
                Advance;
+               Enter_Nesting;
                Result := Node (Syntax.Unary_Node, Operator);
                Syntax.Add_Child (Tree, Result, Parse_Unary);
+               Leave_Nesting;
                return Result;
             end;
          end if;
@@ -422,36 +479,57 @@ package body Flyology_SPARQL.Parsers is
       function Parse_Additive return Syntax.Node_Reference is
          Left : Syntax.Node_Reference := Parse_Multiplicative;
       begin
-         while At_Signed_Number loop
-            declare
-               Text : constant String := Lexers.Text (Current);
-               Operator : constant String := [1 => Text (Text'First)];
-               Result   : constant Syntax.Node_Reference :=
-                 Node (Syntax.Arithmetic_Node, Operator);
-               Operand  : constant Syntax.Node_Reference :=
-                 Node (Syntax.Literal_Node,
-                       Text (Text'First + 1 .. Text'Last),
-                       Lexers.Token_Kind'Image (Peek));
-            begin
-               Advance;
-               Syntax.Add_Child (Tree, Result, Left);
-               Syntax.Add_Child (Tree, Result, Operand);
-               Left := Result;
-            end;
-         end loop;
-
-         while Peek in Lexers.Plus_Token | Lexers.Minus_Token loop
-            declare
-               Operator : constant String :=
-                 (if Peek = Lexers.Plus_Token then "+" else "-");
-               Result : Syntax.Node_Reference;
-            begin
-               Advance;
-               Result := Node (Syntax.Arithmetic_Node, Operator);
-               Syntax.Add_Child (Tree, Result, Left);
-               Syntax.Add_Child (Tree, Result, Parse_Multiplicative);
-               Left := Result;
-            end;
+         --  The two continuations interleave freely -- "?x - 1 +2" takes
+         --  an operator step and then a signed-literal step -- so one
+         --  loop decides each step on its own rather than exhausting one
+         --  form before the other.
+         loop
+            if Peek in Lexers.Plus_Token | Lexers.Minus_Token then
+               declare
+                  Operator : constant String :=
+                    (if Peek = Lexers.Plus_Token then "+" else "-");
+                  Result : Syntax.Node_Reference;
+               begin
+                  Advance;
+                  Result := Node (Syntax.Arithmetic_Node, Operator);
+                  Syntax.Add_Child (Tree, Result, Left);
+                  Syntax.Add_Child (Tree, Result, Parse_Multiplicative);
+                  Left := Result;
+               end;
+            elsif At_Signed_Number then
+               declare
+                  Text : constant String := Lexers.Text (Current);
+                  Operator : constant String := [1 => Text (Text'First)];
+                  Result   : constant Syntax.Node_Reference :=
+                    Node (Syntax.Arithmetic_Node, Operator);
+                  Operand  : Syntax.Node_Reference :=
+                    Node (Syntax.Literal_Node,
+                          Text (Text'First + 1 .. Text'Last),
+                          Lexers.Token_Kind'Image (Peek));
+               begin
+                  Advance;
+                  --  The grammar folds "* y" and "/ y" after a signed
+                  --  literal into the same additive step.
+                  while Peek in Lexers.Star_Token | Lexers.Slash_Token loop
+                     declare
+                        Inner : constant String :=
+                          (if Peek = Lexers.Star_Token then "*" else "/");
+                        Factor : Syntax.Node_Reference;
+                     begin
+                        Advance;
+                        Factor := Node (Syntax.Arithmetic_Node, Inner);
+                        Syntax.Add_Child (Tree, Factor, Operand);
+                        Syntax.Add_Child (Tree, Factor, Parse_Unary);
+                        Operand := Factor;
+                     end;
+                  end loop;
+                  Syntax.Add_Child (Tree, Result, Left);
+                  Syntax.Add_Child (Tree, Result, Operand);
+                  Left := Result;
+               end;
+            else
+               exit;
+            end if;
          end loop;
          return Left;
       end Parse_Additive;
@@ -559,20 +637,24 @@ package body Flyology_SPARQL.Parsers is
          begin
             if Peek = Lexers.Backward_Path_Token then
                Advance;
+               Enter_Nesting;
                declare
                   Result : constant Syntax.Node_Reference :=
                     Node (Syntax.Unary_Node, "^");
                begin
                   Syntax.Add_Child (Tree, Result, Parse_Path_Primary);
+                  Leave_Nesting;
                   return Result;
                end;
             elsif Peek = Lexers.Open_Paren_Token then
                Advance;
+               Enter_Nesting;
                declare
                   Inner : constant Syntax.Node_Reference := Parse_Path;
                begin
                   Expect (Lexers.Close_Paren_Token,
                           "a closing parenthesis");
+                  Leave_Nesting;
                   return Inner;
                end;
             end if;
@@ -674,6 +756,7 @@ package body Flyology_SPARQL.Parsers is
                if Quoted and then Peek /= Lexers.Close_Bracket_Token then
                   Fail ("a property list is not admitted here");
                end if;
+               Enter_Nesting;
                declare
                   Subject : constant Syntax.Node_Reference := Fresh_Blank;
                begin
@@ -681,6 +764,7 @@ package body Flyology_SPARQL.Parsers is
                      Parse_Predicate_Objects (Into, Subject);
                   end if;
                   Expect (Lexers.Close_Bracket_Token, "a closing bracket");
+                  Leave_Nesting;
                   return Subject;
                end;
 
@@ -691,6 +775,7 @@ package body Flyology_SPARQL.Parsers is
                --  A collection: rdf:first and rdf:rest all the way down,
                --  with the empty one being rdf:nil.
                Advance;
+               Enter_Nesting;
                declare
                   Head    : Syntax.Node_Reference :=
                     Node (Syntax.IRI_Node,
@@ -759,11 +844,13 @@ package body Flyology_SPARQL.Parsers is
                         Syntax.Add_Child (Tree, Into, Rest);
                      end;
                   end if;
+                  Leave_Nesting;
                   return Head;
                end;
 
             when Lexers.Open_Triple_Term_Token =>
                Advance;
+               Enter_Nesting;
                declare
                   Result : constant Syntax.Node_Reference :=
                     Node (Syntax.Triple_Term_Node);
@@ -782,6 +869,7 @@ package body Flyology_SPARQL.Parsers is
                     (Tree, Result, Parse_Pattern_Term (Into, Quoted => True));
                   Expect (Lexers.Close_Triple_Term_Token,
                           "a triple term terminator");
+                  Leave_Nesting;
                   return Result;
                end;
 
@@ -789,6 +877,7 @@ package body Flyology_SPARQL.Parsers is
                --  A reified triple names the reifying node and states the
                --  triple about it.
                Advance;
+               Enter_Nesting;
                declare
                   Result : constant Syntax.Node_Reference :=
                     Node (Syntax.Reified_Node);
@@ -820,6 +909,7 @@ package body Flyology_SPARQL.Parsers is
                   Expect (Lexers.Close_Quoted_Token,
                           "a quoted triple terminator");
                   Syntax.Add_Child (Tree, Into, Result);
+                  Leave_Nesting;
                   return Result;
                end;
 
@@ -966,6 +1056,146 @@ package body Flyology_SPARQL.Parsers is
       --  group's whole content as well as one item within it.
       procedure Parse_Subselect (Item : Syntax.Node_Reference);
 
+      --  The modifier clauses take lists -- grouping keys, constraints,
+      --  order keys -- and both the query and a subquery carry them, so
+      --  each list is parsed in exactly one place.
+
+      function Parse_Group_By_Keys return Syntax.Node_Reference;
+      function Parse_Having_Conditions return Syntax.Node_Reference;
+      function Parse_Order_Keys return Syntax.Node_Reference;
+
+      function Parse_Group_By_Keys return Syntax.Node_Reference is
+         Items : constant Syntax.Node_Reference :=
+           Node (Syntax.Projection_Node);
+      begin
+         loop
+            if Peek = Lexers.Open_Paren_Token then
+               --  "( expression )" and "( expression AS ?name )" start
+               --  alike and are told apart only at the AS.
+               Advance;
+               declare
+                  Value : constant Syntax.Node_Reference :=
+                    Parse_Expression;
+               begin
+                  if Take_Keyword ("AS") then
+                     declare
+                        Item : constant Syntax.Node_Reference :=
+                          Node (Syntax.Projection_Node, "AS");
+                     begin
+                        Syntax.Add_Child (Tree, Item, Value);
+                        Syntax.Add_Child (Tree, Item, Parse_Term);
+                        Syntax.Add_Child (Tree, Items, Item);
+                     end;
+                  else
+                     Syntax.Add_Child (Tree, Items, Value);
+                  end if;
+                  Expect (Lexers.Close_Paren_Token,
+                          "a closing parenthesis");
+               end;
+            else
+               Syntax.Add_Child (Tree, Items, Parse_Expression);
+            end if;
+            exit when At_End
+              or else Peek not in Lexers.Variable_Token
+                                | Lexers.Open_Paren_Token
+                                | Lexers.Keyword_Token
+                                | Lexers.IRI_Reference_Token
+                                | Lexers.Prefixed_Name_Token;
+            exit when At_Keyword ("HAVING") or else At_Keyword ("ORDER")
+              or else At_Keyword ("LIMIT") or else At_Keyword ("OFFSET")
+              or else At_Keyword ("VALUES");
+         end loop;
+         return Items;
+      end Parse_Group_By_Keys;
+
+      function Parse_Having_Conditions return Syntax.Node_Reference is
+         Items : constant Syntax.Node_Reference :=
+           Node (Syntax.Projection_Node);
+      begin
+         --  HAVING takes one constraint or several, each a bracketed
+         --  expression or a call.
+         loop
+            Syntax.Add_Child (Tree, Items, Parse_Expression);
+            exit when At_End
+              or else At_Keyword ("ORDER") or else At_Keyword ("LIMIT")
+              or else At_Keyword ("OFFSET") or else At_Keyword ("VALUES")
+              or else Peek not in Lexers.Open_Paren_Token
+                                | Lexers.Keyword_Token
+                                | Lexers.IRI_Reference_Token
+                                | Lexers.Prefixed_Name_Token;
+         end loop;
+         return Items;
+      end Parse_Having_Conditions;
+
+      function Parse_Order_Keys return Syntax.Node_Reference is
+         Items : constant Syntax.Node_Reference :=
+           Node (Syntax.Projection_Node);
+      begin
+         loop
+            declare
+               Direction : String (1 .. 4) := "    ";
+               Length    : Natural := 0;
+            begin
+               if At_Keyword ("ASC") then
+                  Advance;
+                  Direction (1 .. 3) := "ASC";
+                  Length := 3;
+               elsif At_Keyword ("DESC") then
+                  Advance;
+                  Direction (1 .. 4) := "DESC";
+                  Length := 4;
+               end if;
+               declare
+                  Key : constant Syntax.Node_Reference :=
+                    Node (Syntax.Order_Term_Node,
+                          Direction (1 .. Length));
+               begin
+                  Syntax.Add_Child (Tree, Key, Parse_Expression);
+                  Syntax.Add_Child (Tree, Items, Key);
+               end;
+            end;
+            --  An order key may be a bracketed expression, a variable, or
+            --  a call -- and a call is named by an IRI as often as by a
+            --  keyword.
+            exit when At_End
+              or else At_Keyword ("LIMIT")
+              or else At_Keyword ("OFFSET")
+              or else At_Keyword ("VALUES")
+              or else Peek not in Lexers.Variable_Token
+                                | Lexers.Open_Paren_Token
+                                | Lexers.Keyword_Token
+                                | Lexers.IRI_Reference_Token
+                                | Lexers.Prefixed_Name_Token;
+         end loop;
+         return Items;
+      end Parse_Order_Keys;
+
+      --  LIMIT and OFFSET take the unsigned INTEGER terminal: a sign is
+      --  not part of it, and a value past what this implementation can
+      --  hold is refused rather than allowed to escape as an exception.
+      function Parse_Bound (What : String) return Integer;
+
+      function Parse_Bound (What : String) return Integer is
+      begin
+         if Peek /= Lexers.Integer_Token
+           or else Lexers.Text (Current)'Length = 0
+           or else Lexers.Text (Current) (Lexers.Text (Current)'First)
+                   not in '0' .. '9'
+         then
+            Fail ("expected " & What);
+         end if;
+         declare
+            Image : constant String := Lexers.Text (Current);
+         begin
+            Advance;
+            return Integer'Value (Image);
+         exception
+            when Constraint_Error =>
+               Fail (What & " is beyond this implementation");
+               raise Parse_Error;
+         end;
+      end Parse_Bound;
+
       --  An inline data block. It may close a query as well as sit inside
       --  a pattern, so it is written once and called from both.
       function Parse_Values return Syntax.Node_Reference is
@@ -1094,6 +1324,7 @@ package body Flyology_SPARQL.Parsers is
          Result : constant Syntax.Node_Reference := Node (Syntax.Group_Node);
       begin
          Expect (Lexers.Open_Brace_Token, "an opening brace");
+         Enter_Nesting;
 
          if At_Keyword ("SELECT") then
             declare
@@ -1104,6 +1335,7 @@ package body Flyology_SPARQL.Parsers is
                Parse_Subselect (Item);
                Syntax.Add_Child (Tree, Result, Item);
                Expect (Lexers.Close_Brace_Token, "a closing brace");
+               Leave_Nesting;
                return Result;
             end;
          end if;
@@ -1221,6 +1453,7 @@ package body Flyology_SPARQL.Parsers is
          end loop;
 
          Expect (Lexers.Close_Brace_Token, "a closing brace");
+         Leave_Nesting;
          return Result;
       end Parse_Group;
 
@@ -1258,6 +1491,10 @@ package body Flyology_SPARQL.Parsers is
                         Syntax.Add_Child (Tree, Items, Bound);
                      end;
                   else
+                     --  A projected item is a variable or an AS binding.
+                     if Peek /= Lexers.Variable_Token then
+                        Fail ("a projection names a variable");
+                     end if;
                      Syntax.Add_Child (Tree, Items, Parse_Term);
                   end if;
                   exit when Peek /= Lexers.Variable_Token
@@ -1271,7 +1508,9 @@ package body Flyology_SPARQL.Parsers is
             end if;
             Syntax.Add_Child (Tree, Item, Parse_Group);
 
-            --  Trailing modifiers belong to the subquery.
+            --  Trailing modifiers belong to the subquery, and are read
+            --  by the same routines as a query's own so the two readings
+            --  cannot drift apart.
             while At_Keyword ("GROUP") or else At_Keyword ("HAVING")
               or else At_Keyword ("ORDER") or else At_Keyword ("LIMIT")
               or else At_Keyword ("OFFSET")
@@ -1287,14 +1526,31 @@ package body Flyology_SPARQL.Parsers is
                      Expect_Keyword ("BY");
                   end if;
                   if Word in "LIMIT" | "OFFSET" then
+                     if Peek /= Lexers.Integer_Token
+                       or else Lexers.Text (Current)'Length = 0
+                       or else Lexers.Text (Current)
+                                 (Lexers.Text (Current)'First)
+                               not in '0' .. '9'
+                     then
+                        Fail ("expected an unsigned integer");
+                     end if;
                      Syntax.Add_Child (Tree, Modifier, Parse_Term);
-                  else
+                  elsif Word = "GROUP" then
+                     Syntax.Add_Child (Tree, Modifier, Parse_Group_By_Keys);
+                  elsif Word = "HAVING" then
                      Syntax.Add_Child
-                       (Tree, Modifier, Parse_Expression);
+                       (Tree, Modifier, Parse_Having_Conditions);
+                  else
+                     Syntax.Add_Child (Tree, Modifier, Parse_Order_Keys);
                   end if;
                   Syntax.Add_Child (Tree, Item, Modifier);
                end;
             end loop;
+
+            if At_Keyword ("VALUES") then
+               Advance;
+               Syntax.Add_Child (Tree, Item, Parse_Values);
+            end if;
 
       end Parse_Subselect;
 
@@ -1384,6 +1640,17 @@ package body Flyology_SPARQL.Parsers is
             begin
                if Where /= Syntax.No_Node then
                   Syntax.Add_Child (Tree, Where, Data);
+               else
+                  --  Only a DESCRIBE may lack a WHERE clause, and the
+                  --  block still constrains it, so give the data a group
+                  --  of its own rather than dropping it.
+                  declare
+                     Group : constant Syntax.Node_Reference :=
+                       Node (Syntax.Group_Node);
+                  begin
+                     Syntax.Add_Child (Tree, Group, Data);
+                     Syntax.Set_Where (Tree, Group);
+                  end;
                end if;
             end;
          end if;
@@ -1394,117 +1661,27 @@ package body Flyology_SPARQL.Parsers is
          if At_Keyword ("GROUP") then
             Advance;
             Expect_Keyword ("BY");
-            declare
-               Items : constant Syntax.Node_Reference :=
-                 Node (Syntax.Projection_Node);
-            begin
-               loop
-                  if Peek = Lexers.Open_Paren_Token then
-                     --  "( expression )" and "( expression AS ?name )"
-                     --  start alike and are told apart only at the AS.
-                     Advance;
-                     declare
-                        Value : constant Syntax.Node_Reference :=
-                          Parse_Expression;
-                     begin
-                        if Take_Keyword ("AS") then
-                           declare
-                              Item : constant Syntax.Node_Reference :=
-                                Node (Syntax.Projection_Node, "AS");
-                           begin
-                              Syntax.Add_Child (Tree, Item, Value);
-                              Syntax.Add_Child (Tree, Item, Parse_Term);
-                              Syntax.Add_Child (Tree, Items, Item);
-                           end;
-                        else
-                           Syntax.Add_Child (Tree, Items, Value);
-                        end if;
-                        Expect (Lexers.Close_Paren_Token,
-                                "a closing parenthesis");
-                     end;
-                  else
-                     Syntax.Add_Child (Tree, Items, Parse_Expression);
-                  end if;
-                  exit when At_End
-                    or else Peek not in Lexers.Variable_Token
-                                      | Lexers.Open_Paren_Token
-                                      | Lexers.Keyword_Token
-                                      | Lexers.IRI_Reference_Token
-                                      | Lexers.Prefixed_Name_Token;
-                  exit when At_Keyword ("HAVING") or else At_Keyword ("ORDER")
-                    or else At_Keyword ("LIMIT") or else At_Keyword ("OFFSET");
-               end loop;
-               Syntax.Set_Group_By (Tree, Items);
-            end;
+            Syntax.Set_Group_By (Tree, Parse_Group_By_Keys);
          end if;
 
          if At_Keyword ("HAVING") then
             Advance;
-            Syntax.Set_Having (Tree, Parse_Expression);
+            Syntax.Set_Having (Tree, Parse_Having_Conditions);
          end if;
 
          if At_Keyword ("ORDER") then
             Advance;
             Expect_Keyword ("BY");
-            declare
-               Items : constant Syntax.Node_Reference :=
-                 Node (Syntax.Projection_Node);
-            begin
-               loop
-                  declare
-                     Direction : String (1 .. 4) := "    ";
-                     Length    : Natural := 0;
-                  begin
-                     if At_Keyword ("ASC") then
-                        Advance;
-                        Direction (1 .. 3) := "ASC";
-                        Length := 3;
-                     elsif At_Keyword ("DESC") then
-                        Advance;
-                        Direction (1 .. 4) := "DESC";
-                        Length := 4;
-                     end if;
-                     declare
-                        Key : constant Syntax.Node_Reference :=
-                          Node (Syntax.Order_Term_Node,
-                                Direction (1 .. Length));
-                     begin
-                        Syntax.Add_Child (Tree, Key, Parse_Expression);
-                        Syntax.Add_Child (Tree, Items, Key);
-                     end;
-                  end;
-                  --  An order key may be a bracketed expression, a
-                  --  variable, or a call -- and a call is named by an IRI
-                  --  as often as by a keyword.
-                  exit when At_End
-                    or else At_Keyword ("LIMIT")
-                    or else At_Keyword ("OFFSET")
-                    or else Peek not in Lexers.Variable_Token
-                                      | Lexers.Open_Paren_Token
-                                      | Lexers.Keyword_Token
-                                      | Lexers.IRI_Reference_Token
-                                      | Lexers.Prefixed_Name_Token;
-               end loop;
-               Syntax.Set_Order_By (Tree, Items);
-            end;
+            Syntax.Set_Order_By (Tree, Parse_Order_Keys);
          end if;
 
          loop
             if At_Keyword ("LIMIT") then
                Advance;
-               if Peek /= Lexers.Integer_Token then
-                  Fail ("expected a limit");
-               end if;
-               Syntax.Set_Limit (Tree, Integer'Value (Lexers.Text (Current)));
-               Advance;
+               Syntax.Set_Limit (Tree, Parse_Bound ("a limit"));
             elsif At_Keyword ("OFFSET") then
                Advance;
-               if Peek /= Lexers.Integer_Token then
-                  Fail ("expected an offset");
-               end if;
-               Syntax.Set_Offset
-                 (Tree, Integer'Value (Lexers.Text (Current)));
-               Advance;
+               Syntax.Set_Offset (Tree, Parse_Bound ("an offset"));
             else
                exit;
             end if;
@@ -1546,6 +1723,11 @@ package body Flyology_SPARQL.Parsers is
                      Syntax.Add_Child (Tree, Items, Item);
                   end;
                else
+                  --  A projected item is a variable or an AS binding;
+                  --  the general term grammar is wider than that.
+                  if Peek /= Lexers.Variable_Token then
+                     Fail ("a projection names a variable");
+                  end if;
                   Syntax.Add_Child (Tree, Items, Parse_Term);
                end if;
                exit when Peek /= Lexers.Variable_Token
@@ -1650,10 +1832,13 @@ package body Flyology_SPARQL.Parsers is
                         Part : constant Syntax.Node_Reference :=
                           Syntax.Child (Query_Value, Node, Index);
                      begin
+                        --  Generated nodes carry a mark rather than being
+                        --  recognised by their spelling: a document label
+                        --  may begin with 'g' too.
                         if Syntax.Kind (Query_Value, Part)
                            = Syntax.Blank_Node
-                          and then Syntax.Text (Query_Value, Part)'Length > 0
-                          and then Syntax.Text (Query_Value, Part) (1) /= 'g'
+                          and then Syntax.Detail (Query_Value, Part)
+                                   /= "generated"
                         then
                            declare
                               Tag : constant String :=
@@ -2066,6 +2251,14 @@ package body Flyology_SPARQL.Parsers is
                Syntax.Set_Selects_All (Tree, True);
             else
                loop
+                  --  A DESCRIBE target is a variable or an IRI; the
+                  --  general term grammar is wider than that.
+                  if Peek not in Lexers.Variable_Token
+                               | Lexers.IRI_Reference_Token
+                               | Lexers.Prefixed_Name_Token
+                  then
+                     Fail ("DESCRIBE names variables and IRIs");
+                  end if;
                   Syntax.Add_Child (Tree, Items, Parse_Term);
                   exit when Peek not in Lexers.Variable_Token
                                       | Lexers.IRI_Reference_Token
@@ -2128,6 +2321,12 @@ package body Flyology_SPARQL.Parsers is
                Consumed_Position := Position;
 
             when Lexers.Needs_More_Input =>
+               if Ended then
+                  raise Parse_Error with
+                    "input ended inside a token at line"
+                    & Position.Line'Image & ", column"
+                    & Position.Column'Image;
+               end if;
                exit;
 
             when Lexers.End_Of_Input =>

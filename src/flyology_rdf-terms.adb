@@ -32,6 +32,7 @@ package body Flyology_RDF.Terms is
 
    function Is_Well_Formed_Language (Value : String) return Boolean is
       Subtag_Length : Natural := 0;
+      First_Subtag  : Boolean := True;
    begin
       if Value'Length = 0 then
          return False;
@@ -46,6 +47,7 @@ package body Flyology_RDF.Terms is
                   return False;
                end if;
                Subtag_Length := 0;
+               First_Subtag := False;
             elsif Item in 'a' .. 'z' | 'A' .. 'Z' then
                Subtag_Length := Subtag_Length + 1;
                --  No subtag runs past eight characters.
@@ -54,7 +56,7 @@ package body Flyology_RDF.Terms is
                end if;
             elsif Item in '0' .. '9' then
                --  Digits are permitted in continuation subtags only.
-               if Index = Value'First then
+               if First_Subtag then
                   return False;
                end if;
                Subtag_Length := Subtag_Length + 1;
@@ -216,9 +218,11 @@ package body Flyology_RDF.Terms is
            "language tag is empty or malformed";
       end if;
 
+      --  RDF 1.2 gives a literal that carries a base direction the
+      --  rdf:dirLangString datatype, not rdf:langString.
       return Build_Literal
         (Lexical_Form  => Lexical_Form,
-         Datatype      => Language_String_Datatype,
+         Datatype      => IRIs.From_UTF_8 (RDF_Dir_Lang_String),
          Has_Language  => True,
          Language      => Ada.Characters.Handling.To_Lower (Language),
          Has_Direction => True,

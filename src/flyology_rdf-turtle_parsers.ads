@@ -294,6 +294,14 @@ private
       --  Labels the document wrote itself, so that a generated label
       --  never collides with one of them.
       Document_Labels : Label_Sets.Set;
+
+      --  Labels this parser generated, so that a document label arriving
+      --  later cannot silently merge with a node already emitted.
+      Generated_Labels : Label_Sets.Set;
+
+      --  Document labels whose spelling a generated label had already
+      --  taken, mapped to the replacement each was issued.
+      Renamed_Labels  : Prefix_Maps.Map;
       Blank_Counter   : Natural := 0;
       Quad_Count      : Natural := 0;
       Byte_Count      : Natural := 0;

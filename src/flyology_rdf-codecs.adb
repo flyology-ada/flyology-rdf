@@ -17,6 +17,11 @@ package body Flyology_RDF.Codecs is
    Tag_Literal : constant Character := Character'Val (3);
    Tag_Triple  : constant Character := Character'Val (4);
 
+   RDF_Lang_String : constant String :=
+     "http://www.w3.org/1999/02/22-rdf-syntax-ns#langString";
+   RDF_Dir_Lang_String : constant String :=
+     "http://www.w3.org/1999/02/22-rdf-syntax-ns#dirLangString";
+
    Graph_Default : constant Character := Character'Val (0);
    Graph_IRI     : constant Character := Character'Val (1);
    Graph_Blank   : constant Character := Character'Val (2);
@@ -266,6 +271,18 @@ package body Flyology_RDF.Codecs is
             Get_Bytes (Bytes, Index, Lexical);
             Get_Bytes (Bytes, Index, Datatype);
 
+            --  The model fixes the datatype of a language-tagged literal,
+            --  so an encoding that names any other one describes a term
+            --  this crate will not build. Accepting it would also let two
+            --  distinct byte strings decode to equal terms.
+            if Has_Tag
+              and then Unbounded.To_String (Datatype)
+                       /= (if Directed then RDF_Dir_Lang_String
+                           else RDF_Lang_String)
+            then
+               Fail;
+            end if;
+
             if Has_Tag then
                Get_Bytes (Bytes, Index, Language);
             end if;
@@ -375,22 +392,29 @@ package body Flyology_RDF.Codecs is
          raise Program_Error;
       end Get_Graph;
 
-      Graph     : constant Quads.Graph_Name := Get_Graph;
-      Subject   : constant Terms.Term := Get_Term (Bytes, Index, 0);
-      Predicate : Unbounded.Unbounded_String;
    begin
-      Get_Bytes (Bytes, Index, Predicate);
-
+      --  The components are built inside the handled sequence rather than
+      --  in the declarative part: an exception raised while elaborating a
+      --  declaration would propagate past the handler below and reach the
+      --  caller untranslated.
       declare
-         Object : constant Terms.Term := Get_Term (Bytes, Index, 0);
+         Graph     : constant Quads.Graph_Name := Get_Graph;
+         Subject   : constant Terms.Term := Get_Term (Bytes, Index, 0);
+         Predicate : Unbounded.Unbounded_String;
       begin
-         if Index /= Bytes'Last + 1 then
-            Fail;
-         end if;
-         return Quads.Create
-           (Graph, Subject,
-            IRIs.From_UTF_8 (Unbounded.To_String (Predicate)),
-            Object);
+         Get_Bytes (Bytes, Index, Predicate);
+
+         declare
+            Object : constant Terms.Term := Get_Term (Bytes, Index, 0);
+         begin
+            if Index /= Bytes'Last + 1 then
+               Fail;
+            end if;
+            return Quads.Create
+              (Graph, Subject,
+               IRIs.From_UTF_8 (Unbounded.To_String (Predicate)),
+               Object);
+         end;
       end;
    exception
       when IRIs.Invalid_IRI | IRIs.Invalid_UTF_8

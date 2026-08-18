@@ -398,6 +398,39 @@ begin
    Check_Rejects ("^x", Lexers.Unexpected_Character,
                   "a lone caret is not an RDF token");
 
+   ------------------------------------------------------------------
+   --  Regressions: defects found by review, kept fixed
+   ------------------------------------------------------------------
+   Check_Scan ("@prefix-de", "LANGUAGE_TOKEN(prefix-de) ",
+               "a language tag that starts like a directive");
+   Check_Scan ("@base--ltr", "LANGUAGE_TOKEN(base)[LEFT_TO_RIGHT] ",
+               "a directional tag that starts like a directive");
+   Check_Chunk_Invariance ("""" & "x" & """" & "@prefix-de .",
+                           "a directive-shaped language tag");
+
+   Check_Rejects ("_: ", Lexers.Unexpected_Character,
+                  "an empty blank node label");
+   Check_N3 ("_: ", "BLANK_LABEL_TOKEN() ",
+             "N3 reads a bare label as an unnamed existential");
+   Check_Rejects ("_:a%41 ", Lexers.Unexpected_Character,
+                  "no percent escape in a blank node label");
+   Check_Rejects ("_:a\! ", Lexers.Unexpected_Character,
+                  "no reserved-character escape in a blank node label");
+
+   Check_Rejects ("+.e0", Lexers.Malformed_Number,
+                  "a double needs digits before a dot-exponent");
+   Check_Scan ("1.e0", "DOUBLE_TOKEN(1.e0) ",
+               "digits before a dot-exponent");
+
+   Check_Scan ("ex:. ", "PREFIXED_NAME_TOKEN(ex|) DOT_TOKEN ",
+               "a dot cannot open a local name");
+
+   Check_Equal (Scan_Of ("?a-?b", Lexers.SPARQL_Dialect),
+                "VARIABLE_TOKEN MINUS_TOKEN VARIABLE_TOKEN ",
+                "a hyphen ends a SPARQL variable");
+   Check_N3 ("?a-b ", "VARIABLE_TOKEN ",
+             "a hyphen continues an N3 variable");
+
    IO.Put_Line ("  checks              " & Checks'Image);
    IO.Put_Line ("  failures            " & Failures'Image);
 

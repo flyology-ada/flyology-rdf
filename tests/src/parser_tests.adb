@@ -85,6 +85,9 @@ procedure Parser_Tests is
       Diagnosed  : Boolean := False;
       Last_Code  : Parsers.Diagnostic_Code := Parsers.Malformed_Syntax;
       Graphs     : Natural := 0;
+      --  When set, On_Quad raises, which is how a consumer's own failure
+      --  reaches the parser.
+      Fail_Quads : Boolean := False;
    end record;
 
    overriding procedure On_Graph_Declaration
@@ -119,6 +122,9 @@ procedure Parser_Tests is
       pragma Unreferenced (Span);
       Graph : constant Quads.Graph_Name := Quads.Graph (Value);
    begin
+      if Target.Fail_Quads then
+         raise Program_Error with "sink deliberately failing";
+      end if;
       if Quads.Kind (Graph) /= Quads.Default_Graph_Kind then
          Unbounded.Append
            (Target.Lines, Render (Quads.Name_Term (Graph)) & " ");
@@ -473,6 +479,90 @@ begin
       Check (Ok_Split, "mixed document parses byte at a time");
       Check_Equal (Unbounded.To_String (Split), Unbounded.To_String (Whole),
                    "mixed document is chunk invariant");
+   end;
+
+   ------------------------------------------------------------------
+   --  Regressions: defects found by review, kept fixed
+   ------------------------------------------------------------------
+
+   --  "@prefix" followed by a hyphen is a language tag, not a directive.
+   Check_Parse
+     ("<http://s> <http://p> ""chat""@prefix-de .",
+      "<http://s> <http://p> ""chat""@prefix-de ." & ASCII.LF,
+      "a language tag that starts like a directive");
+
+   Check_Rejects ("_: <http://p> <http://o> .",
+                  "an empty blank node label");
+   Check_Rejects ("_:a%41 <http://p> <http://o> .",
+                  "a percent escape in a blank node label");
+   Check_Rejects ("_:a\! <http://p> <http://o> .",
+                  "a reserved-character escape in a blank node label");
+   Check_Rejects ("<http://s> <http://p> +.e0 .",
+                  "a double with no digits before its dot-exponent");
+   Check_Rejects (EX & "ex:s ex:p ""x""@en-abcdefghi .",
+                  "a language subtag past eight characters");
+   Check_Rejects
+     ("<http://s> <http://p> ""x""^^"
+      & "<http://www.w3.org/1999/02/22-rdf-syntax-ns#langString> .",
+      "rdf:langString as an explicit datatype");
+   Check_Rejects
+     ("<http://g> { <http://g2> { <http://s> <http://p> <http://o> }",
+      "a nested labelled graph block");
+   Check_Rejects
+     ("{ { <http://s> <http://p> <http://o> }",
+      "a nested anonymous graph block");
+   Check_Rejects
+     ("<http://a> <http://b> <http://c> . "
+      & [1 .. 3 => '"'] & "x" & [1 .. 2 => '"'],
+      "an unterminated long string at the end of input");
+   Check_Rejects
+     ("<http://a> <http://b> <http://c> . " & Character'Val (16#C3#),
+      "truncated UTF-8 at the end of input",
+      Parsers.Invalid_Encoding);
+   Check_Rejects ("<http://s> _:p <http://o> .",
+                  "a blank node is not a line-based predicate",
+                  Syntax => Parsers.NTriples_Syntax);
+
+   --  A document label arriving after a generated label took its
+   --  spelling names a different node, so it is renamed, not merged.
+   Check_Parse
+     ("[] <http://p> <http://o> . _:b1 <http://q> <http://r> .",
+      "_:b1 <http://p> <http://o> ." & ASCII.LF &
+      "_:b2 <http://q> <http://r> ." & ASCII.LF,
+      "a later document label cannot merge with a generated one");
+
+   --  And the rename is remembered, so every later mention of that label
+   --  is the same node rather than a fresh one each time.
+   Check_Parse
+     ("[] <http://p> <http://o> . _:b1 <http://q> <http://r> ."
+      & " _:b1 <http://s> <http://t> .",
+      "_:b1 <http://p> <http://o> ." & ASCII.LF &
+      "_:b2 <http://q> <http://r> ." & ASCII.LF &
+      "_:b2 <http://s> <http://t> ." & ASCII.LF,
+      "a renamed document label keeps its replacement");
+
+   --  A sink that raises poisons the parse: nothing more is emitted, and
+   --  Finish reports failure.
+   declare
+      Sink   : Collector;
+      Parser : Parsers.Parser := Parsers.Create (Source_Name => "test");
+   begin
+      Sink.Fail_Quads := True;
+      begin
+         Parsers.Feed
+           (Parser, "<http://s> <http://p> <http://o> . ", Sink);
+         Check (False, "a sink exception propagates out of Feed");
+      exception
+         when Program_Error =>
+            Check (True, "a sink exception propagates out of Feed");
+      end;
+      Sink.Fail_Quads := False;
+      Sink.Lines := Unbounded.Null_Unbounded_String;
+      Parsers.Feed (Parser, "<http://s2> <http://p2> <http://o2> . ", Sink);
+      Check (Unbounded.Length (Sink.Lines) = 0,
+             "a poisoned parser emits nothing");
+      Check (Parsers.Finish (Parser, Sink) = Parsers.Parse_Failed,
+             "a poisoned parser reports failure");
    end;
 
    IO.Put_Line ("  checks              " & Checks'Image);

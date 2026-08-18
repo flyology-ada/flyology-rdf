@@ -6,6 +6,7 @@
 --  side effect of naming a term.
 
 with Ada.Command_Line;
+with Ada.Strings.Unbounded;
 with Ada.Text_IO;
 with Flyology_N3.Model;
 with Flyology_N3.Parsers;
@@ -244,6 +245,59 @@ begin
    Check_Rejects (EX & "ex:s ex:p ( ex:a ", "an unclosed list");
    Check_Rejects ("ex:s ex:p ex:o .", "an undefined prefix");
    Check_Rejects ("<relative> <p> <o> .", "a relative IRI with no base");
+
+   ------------------------------------------------------------------
+   --  Regressions: defects found by review, kept fixed
+   ------------------------------------------------------------------
+
+   --  A bare "_:" is an unnamed existential, not an error.
+   Check_N3 (EX & "_: ex:p ex:o .",
+             "_:b1 <http://example.org/p> <http://example.org/o> ."
+             & ASCII.LF,
+             "a bare label reads as an unnamed existential");
+
+   --  A literal the model refuses fails as a parse error, not as an
+   --  exception the contract does not name.
+   Check_Rejects (EX & "ex:s ex:p ""x""@en-abcdefghi .",
+                  "an overlong language subtag");
+
+   --  Nesting past the model's bound is a parse error on the way in,
+   --  and a document that is nothing but open braces cannot exhaust
+   --  the stack -- while formulas that stay empty may nest deeper
+   --  than any term, which the corpus relies on.
+   declare
+      package SU renames Ada.Strings.Unbounded;
+
+      function Nested (Levels : Natural) return String is
+         Buffer : SU.Unbounded_String;
+      begin
+         for Ignored in 1 .. Levels loop
+            SU.Append (Buffer, "{ <http://a> <http://b> ");
+         end loop;
+         SU.Append (Buffer, "<http://c>");
+         for Ignored in 1 .. Levels loop
+            SU.Append (Buffer, " }");
+         end loop;
+         SU.Append (Buffer, " .");
+         return SU.To_String (Buffer);
+      end Nested;
+
+      Empty_Deep : SU.Unbounded_String;
+   begin
+      Check_Rejects (Nested (140), "nesting past the model's bound");
+      Check_Rejects (Nested (60_000), "unbounded nesting");
+
+      for Ignored in 1 .. 1_100 loop
+         SU.Append (Empty_Deep, "{");
+      end loop;
+      for Ignored in 1 .. 1_100 loop
+         SU.Append (Empty_Deep, "}");
+      end loop;
+      SU.Append (Empty_Deep, " .");
+      Check_Equal
+        (Written (SU.To_String (Empty_Deep)), "",
+         "empty formulas may nest deeper than any term");
+   end;
 
    IO.Put_Line ("  checks              " & Checks'Image);
    IO.Put_Line ("  failures            " & Failures'Image);

@@ -232,8 +232,8 @@ begin
                 (Terms.Directional_Literal ("hi", "ar",
                                             Terms.Right_To_Left))),
       "0303" & "02" & To_Hex ("hi")
-      & "35" & To_Hex ("http://www.w3.org/1999/02/22-rdf-syntax-ns#"
-                       & "langString")
+      & "38" & To_Hex ("http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+                       & "dirLangString")
       & "02" & To_Hex ("ar") & "01",
       "golden vector: a right-to-left literal");
 
@@ -262,6 +262,41 @@ begin
                    Character'Val (128), Character'Val (128),
                    Character'Val (128)],
                   "a length that never terminates");
+
+   ------------------------------------------------------------------
+   --  Regressions: defects found by review, kept fixed
+   ------------------------------------------------------------------
+
+   --  A language-tagged literal's datatype is fixed by the model, so
+   --  bytes that say otherwise are not an encoding of any term.
+   Check_Rejects
+     ([Character'Val (3), Character'Val (1), Character'Val (1)] & "x"
+      & [Character'Val (10)] & "http://foo"
+      & [Character'Val (2)] & "en",
+      "a language literal with a foreign datatype");
+
+   --  A malformed quad must decode to Invalid_Encoding, not to whatever
+   --  the term model raised while its components were being built.
+   declare
+      Bytes : constant String :=
+        [Character'Val (1), Character'Val (8)] & "notaniri";
+   begin
+      Checks := Checks + 1;
+      declare
+         Ignored : constant Quads.Quad := Codecs.Decode_Quad (Bytes);
+         pragma Unreferenced (Ignored);
+      begin
+         Failures := Failures + 1;
+         IO.Put_Line ("  FAIL  a quad with a malformed graph IRI decoded");
+      end;
+   exception
+      when Codecs.Invalid_Encoding =>
+         null;
+      when others =>
+         Failures := Failures + 1;
+         IO.Put_Line
+           ("  FAIL  a malformed quad graph escaped as another exception");
+   end;
 
    IO.Put_Line ("  checks              " & Checks'Image);
    IO.Put_Line ("  failures            "

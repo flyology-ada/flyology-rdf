@@ -95,6 +95,35 @@ package body Flyology_N3.Parsers is
          Advance;
       end Expect;
 
+      --  Descent depth across formulas, lists and property lists. The
+      --  model enforces its own bound when a term is built, but that is
+      --  on the way out of the recursion; checking on the way in keeps a
+      --  document that is nothing but open braces from exhausting the
+      --  stack before any bound can fire. The margin over the model's
+      --  bound is deliberate: a formula that stays empty -- a bare term
+      --  as a statement contributes nothing -- nests deeper than any
+      --  term the model can build, and the corpus carries one over a
+      --  thousand braces deep. The ceiling is what a default-sized
+      --  stack demonstrably survives with statements at every level.
+      Maximum_Descent : constant Positive := 9 * Model.Maximum_Depth;
+      Depth           : Natural := 0;
+
+      procedure Enter_Nesting;
+      procedure Leave_Nesting;
+
+      procedure Enter_Nesting is
+      begin
+         Depth := Depth + 1;
+         if Depth > Maximum_Descent then
+            Fail ("nesting exceeds the maximum depth");
+         end if;
+      end Enter_Nesting;
+
+      procedure Leave_Nesting is
+      begin
+         Depth := Depth - 1;
+      end Leave_Nesting;
+
       function Fresh_Blank return Model.Term is
       begin
          loop
@@ -253,6 +282,13 @@ package body Flyology_N3.Parsers is
                Fail ("expected a literal");
          end case;
          raise Parse_Error;
+      exception
+         when Terms.Invalid_Literal | Terms.Invalid_Language_Tag =>
+            --  Grammar-shaped tokens can still name a literal the model
+            --  refuses, such as a language tag outside the well-formed
+            --  shape. That is a rejection of the document.
+            Fail ("invalid literal");
+            raise Parse_Error;
       end Parse_Literal;
 
       --  One term with no path suffix applied yet.
@@ -299,6 +335,7 @@ package body Flyology_N3.Parsers is
             when Lexers.Open_Paren_Token =>
                --  N3 lists are first-class terms, not rdf:List chains.
                Advance;
+               Enter_Nesting;
                declare
                   Items : Model.Builder;
                begin
@@ -307,11 +344,13 @@ package body Flyology_N3.Parsers is
                      Model.Append (Items, Parse_Expression (Into));
                   end loop;
                   Expect (Lexers.Close_Paren_Token, "a closing parenthesis");
+                  Leave_Nesting;
                   return Model.List (Items);
                end;
 
             when Lexers.Open_Bracket_Token =>
                Advance;
+               Enter_Nesting;
                declare
                   --  "[ id <iri> ... ]" states its properties about the
                   --  IRI named there rather than about a fresh node. The
@@ -340,6 +379,7 @@ package body Flyology_N3.Parsers is
                      Parse_Property_List (Subject, Into);
                   end if;
                   Expect (Lexers.Close_Bracket_Token, "a closing bracket");
+                  Leave_Nesting;
                   return Subject;
                end;
 
@@ -494,10 +534,12 @@ package body Flyology_N3.Parsers is
          Inner : Statement_Sink;
       begin
          Expect (Lexers.Open_Brace_Token, "an opening brace");
+         Enter_Nesting;
          while not At_End and then Peek /= Lexers.Close_Brace_Token loop
             Parse_Statement (Inner);
          end loop;
          Expect (Lexers.Close_Brace_Token, "a closing brace");
+         Leave_Nesting;
          return Model.Formula (Inner.Items);
       end Parse_Formula;
 
@@ -619,6 +661,14 @@ package body Flyology_N3.Parsers is
          Parse_Statement (Document_Sink);
       end loop;
       return Model.Formula (Document_Sink.Items);
+   exception
+      when Model.Invalid_Term | Terms.Invalid_Term | Terms.Invalid_Literal
+         | Terms.Invalid_Language_Tag | Terms.Term_Limit_Error =>
+         --  A term the model refuses on a path not wrapped above. The
+         --  document asked for something unrepresentable, which is a
+         --  failure of the parse, not of the caller.
+         raise Parse_Error with "the document names a term the model"
+           & " will not build";
    end Parse_Tokens;
 
    ---------------------------------------------------------------------
@@ -656,6 +706,12 @@ package body Flyology_N3.Parsers is
                Consumed_Position := Position;
 
             when Lexers.Needs_More_Input =>
+               if Ended then
+                  raise Parse_Error with
+                    "input ended inside a token at line"
+                    & Position.Line'Image & ", column"
+                    & Position.Column'Image;
+               end if;
                exit;
 
             when Lexers.End_Of_Input =>
