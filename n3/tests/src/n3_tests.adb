@@ -286,6 +286,12 @@ begin
    --  leading digit and N3 does not, and the suite withdrew the one
    --  test that read otherwise, saying so in as many words.
    Check_Rejects (EX & "ex:s ex:p ?1 .", "a variable starting with a digit");
+
+   --  RDF 1.2 writes a base direction as a suffix of the language tag.
+   --  Notation3's grammar has no such suffix, so the hyphens belong to
+   --  the tag and "en--ltr" is simply a language tag it does not admit.
+   Check_Rejects (EX & "ex:s ex:p " & '"' & "x" & '"' & "@en--ltr .",
+                  "an RDF 1.2 direction suffix in Notation3");
    Check_Rejects (EX & "{ ex:a ex:b ex:c ", "an unclosed formula");
    Check_Rejects (EX & "ex:s ex:p ( ex:a ", "an unclosed list");
    Check_Rejects ("ex:s ex:p ex:o .", "an undefined prefix");

@@ -311,6 +311,35 @@ begin
                      "case-variant boolean literals");
    Check_Round_Trip ("SELECT * { ?s ?p TRUE }",
                      "a case-variant boolean in a pattern");
+
+   --  SourceSelector is an iri; VarOrIri is a variable or an iri;
+   --  DataBlockValue is a ground term. All three were read with the
+   --  general term parser, which admits a literal, a blank node and "a".
+   Check_Rejects ("SELECT * FROM ?g { ?s ?p ?o }", "a variable as FROM");
+   Check_Rejects ("SELECT * FROM 42 { ?s ?p ?o }", "a literal as FROM");
+   Check_Rejects ("SELECT * { GRAPH 42 { ?s ?p ?o } }",
+                  "a literal as a GRAPH name");
+   Check_Rejects ("SELECT * { GRAPH _:b { ?s ?p ?o } }",
+                  "a blank node as a GRAPH name");
+   Check_Rejects ("SELECT * { VALUES ?x { ?y } }",
+                  "a variable in a VALUES row");
+   Check_Rejects ("SELECT * { VALUES ?x { _:b } }",
+                  "a blank node in a VALUES row");
+   Check_Rejects ("SELECT * { VALUES ?x { a } }", "a in a VALUES row");
+
+   --  A template's verb is a variable or an IRI; a property path is a
+   --  route through the data, and there is nothing to construct from it.
+   Check_Rejects
+     ("PREFIX : <http://e/> CONSTRUCT WHERE { ?s :p/:q ?o }",
+      "a property path in CONSTRUCT WHERE");
+
+   --  The forms that stay legal.
+   Check_Round_Trip ("SELECT * FROM <http://e/g> { ?s ?p ?o }",
+                     "an IRI as FROM");
+   Check_Round_Trip ("SELECT * { GRAPH ?g { ?s ?p ?o } }",
+                     "a variable as a GRAPH name");
+   Check_Round_Trip ("SELECT * { VALUES ?x { <http://e/a> 1 } }",
+                     "ground values in a VALUES row");
    Check_Round_Trip ("SELECT * WHERE { FILTER(?x+1*2 = 3) }",
                      "a product after a signed literal");
 

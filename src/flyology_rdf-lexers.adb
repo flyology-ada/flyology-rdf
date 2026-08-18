@@ -1003,8 +1003,11 @@ package body Flyology_RDF.Lexers is
                   return;
                end if;
 
-               if Next = 16#2D# then
-                  --  A second hyphen: this is the direction marker.
+               if Next = 16#2D# and then Dialect /= N3_Dialect then
+                  --  A second hyphen: this is the direction marker. RDF
+                  --  1.2 introduced it and Notation3's grammar has no
+                  --  such suffix, so in that dialect the hyphen belongs
+                  --  to the language tag and the scan continues.
                   Step (Next, Next_Length);
                   declare
                      Marker : Unbounded.Unbounded_String;

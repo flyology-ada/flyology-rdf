@@ -260,6 +260,15 @@ package body Flyology_SPARQL.Writers is
          end if;
       end Write_Operand;
 
+      --  FROM comes between the result form and WHERE. Writing it after
+      --  the keyword produced "WHERE FROM <g>", which does not re-parse.
+      procedure Write_Dataset is
+      begin
+         if Syntax.Dataset (Value) /= Syntax.No_Node then
+            Put (" " & Render (Syntax.Dataset (Value)));
+         end if;
+      end Write_Dataset;
+
       procedure Write_Pattern
         (Node : Syntax.Node_Reference; Depth : Natural) is
       begin
@@ -435,14 +444,17 @@ package body Flyology_SPARQL.Writers is
             else
                Put (" " & Render (Syntax.Projection (Value)));
             end if;
+            Write_Dataset;
             Put (ASCII.LF & "WHERE ");
 
          when Syntax.Ask_Query =>
             Put ("ASK ");
+            Write_Dataset;
 
          when Syntax.Construct_Query =>
             Put ("CONSTRUCT ");
             Write_Group (Syntax.Template (Value), 0);
+            Write_Dataset;
             Put (ASCII.LF & "WHERE ");
 
          when Syntax.Describe_Query =>
@@ -452,15 +464,12 @@ package body Flyology_SPARQL.Writers is
             else
                Put (Render (Syntax.Describe_Targets (Value)));
             end if;
+            Write_Dataset;
             Put ((1 => ASCII.LF));
             if Syntax.Where_Clause (Value) /= Syntax.No_Node then
                Put ("WHERE ");
             end if;
       end case;
-
-      if Syntax.Dataset (Value) /= Syntax.No_Node then
-         Put (Render (Syntax.Dataset (Value)) & (1 => ASCII.LF));
-      end if;
 
       if Syntax.Where_Clause (Value) /= Syntax.No_Node then
          Write_Group (Syntax.Where_Clause (Value), 0);

@@ -339,6 +339,51 @@ package body Flyology_SPARQL.Parsers is
          raise Parse_Error;
       end Parse_Term;
 
+      --  SourceSelector is an iri, and VarOrIri is a variable or an iri.
+      --  Reading these positions with the general term parser let a
+      --  literal, a blank node or "a" through.
+      function Parse_IRI_Only (Where : String) return Syntax.Node_Reference
+      is
+      begin
+         if Peek not in Lexers.IRI_Reference_Token
+                      | Lexers.Prefixed_Name_Token
+         then
+            Fail (Where & " takes an IRI");
+         end if;
+         return Parse_Term;
+      end Parse_IRI_Only;
+
+      --  DataBlockValue is an iri, a literal, or UNDEF -- a ground term.
+      --  A variable, a blank node or "a" is none of those.
+      function Parse_Data_Value return Syntax.Node_Reference is
+      begin
+         if Peek not in Lexers.IRI_Reference_Token
+                      | Lexers.Prefixed_Name_Token
+                      | Lexers.String_Token
+                      | Lexers.Integer_Token
+                      | Lexers.Decimal_Token
+                      | Lexers.Double_Token
+                      | Lexers.Boolean_Token
+                      | Lexers.Open_Triple_Term_Token
+         then
+            Fail ("a VALUES row takes an IRI, a literal or UNDEF");
+         end if;
+         return Parse_Term;
+      end Parse_Data_Value;
+
+      function Parse_Var_Or_IRI (Where : String) return Syntax.Node_Reference
+      is
+      begin
+         if Peek not in Lexers.IRI_Reference_Token
+                      | Lexers.Prefixed_Name_Token
+                      | Lexers.Variable_Token
+         then
+            Fail (Where & " takes a variable or an IRI");
+         end if;
+         return Parse_Term;
+      end Parse_Var_Or_IRI;
+
+
       ------------------------------------------------------------------
       --  Expressions, in precedence order
       ------------------------------------------------------------------
@@ -1283,7 +1328,8 @@ package body Flyology_SPARQL.Parsers is
                                 (Tree, Row,
                                  Node (Syntax.Call_Node, "UNDEF"));
                            else
-                              Syntax.Add_Child (Tree, Row, Parse_Term);
+                              Syntax.Add_Child
+                                (Tree, Row, Parse_Data_Value);
                            end if;
                         end loop;
                         Expect (Lexers.Close_Paren_Token,
@@ -1309,7 +1355,8 @@ package body Flyology_SPARQL.Parsers is
                              (Tree, Row,
                               Node (Syntax.Call_Node, "UNDEF"));
                         else
-                           Syntax.Add_Child (Tree, Row, Parse_Term);
+                           Syntax.Add_Child
+                             (Tree, Row, Parse_Data_Value);
                         end if;
                         Syntax.Add_Child (Tree, Item, Row);
                      end;
@@ -1430,7 +1477,10 @@ package body Flyology_SPARQL.Parsers is
                                          else Syntax.Service_Node),
                              Detail  => (if Silent then "SILENT" else ""));
                   end;
-                  Syntax.Add_Child (Tree, Item, Parse_Term);
+                  Syntax.Add_Child
+                    (Tree, Item,
+                     Parse_Var_Or_IRI
+                       (if Is_Graph then "GRAPH" else "SERVICE"));
                   Syntax.Add_Child (Tree, Item, Parse_Group);
                   Syntax.Add_Child (Tree, Result, Item);
                end;
@@ -1667,7 +1717,8 @@ package body Flyology_SPARQL.Parsers is
                  Node (Syntax.Dataset_Node,
                        (if Named then "FROM NAMED" else "FROM"));
             begin
-               Syntax.Add_Child (Tree, Item, Parse_Term);
+               Syntax.Add_Child
+                 (Tree, Item, Parse_IRI_Only ("FROM"));
                Syntax.Add_Child (Tree, Items, Item);
                Any := True;
             end;
@@ -2290,12 +2341,26 @@ package body Flyology_SPARQL.Parsers is
                --  pattern has to be something a template could contain:
                --  triples and nothing else.
                for Index in 1 .. Syntax.Child_Count (Tree, Where) loop
-                  if Syntax.Kind (Tree, Syntax.Child (Tree, Where, Index))
-                     not in Syntax.Triple_Node | Syntax.Reified_Node
-                          | Syntax.Triple_Term_Node
-                  then
-                     Fail ("CONSTRUCT WHERE admits only a triples block");
-                  end if;
+                  declare
+                     Item : constant Syntax.Node_Reference :=
+                       Syntax.Child (Tree, Where, Index);
+                  begin
+                     if Syntax.Kind (Tree, Item)
+                        not in Syntax.Triple_Node | Syntax.Reified_Node
+                             | Syntax.Triple_Term_Node
+                     then
+                        Fail ("CONSTRUCT WHERE admits only a triples block");
+                     end if;
+                     --  A template's verb is a variable or an IRI. A
+                     --  property path describes a route through the data
+                     --  and there is nothing to construct from it.
+                     if Syntax.Kind (Tree, Item) = Syntax.Triple_Node
+                       and then Syntax.Child_Count (Tree, Item) >= 2
+                       and then Is_Path (Syntax.Child (Tree, Item, 2))
+                     then
+                        Fail ("a template takes no property path");
+                     end if;
+                  end;
                end loop;
                Syntax.Set_Template (Tree, Where);
                Syntax.Set_Where (Tree, Where);
