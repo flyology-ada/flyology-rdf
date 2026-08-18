@@ -8,6 +8,7 @@
 --  Each example prints what it produced, so `alr run` is also the check
 --  that the output in the documentation is the output you get.
 
+with Ada.Strings.Unbounded;
 with Ada.Text_IO;
 
 with Flyology_RDF.Canonicalization;
@@ -30,6 +31,7 @@ with Flyology_SPARQL.Writers;
 procedure Examples is
 
    package IO renames Ada.Text_IO;
+   package Unbounded renames Ada.Strings.Unbounded;
    package RDF renames Flyology_RDF;
 
    procedure Heading (Title : String) is
@@ -278,6 +280,212 @@ begin
       IO.Put_Line
         ("  form: " & Flyology_SPARQL.Syntax.Form (Parsed)'Image);
       IO.Put (Flyology_SPARQL.Writers.To_SPARQL (Parsed));
+   end;
+
+   ---------------------------------------------------------------------
+   Heading ("Every event carries its graph");
+   declare
+      Quoted : constant String :=
+        "@prefix : <http://example.org/> ." & ASCII.LF
+        & ":g { :ada :wrote :notes . }" & ASCII.LF;
+      Data : constant RDF.Datasets.Dataset :=
+        Read (Quoted, RDF.Turtle_Parsers.TriG_Syntax);
+
+      procedure Note (Statement : RDF.Quads.Quad);
+
+      procedure Note (Statement : RDF.Quads.Quad) is
+         Where : constant RDF.Quads.Graph_Name :=
+           RDF.Quads.Graph (Statement);
+      begin
+         IO.Put_Line
+           ("  in "
+            & (case RDF.Quads.Kind (Where) is
+                  when RDF.Quads.Default_Graph_Kind => "the default graph",
+                  when RDF.Quads.IRI_Graph_Kind =>
+                     RDF.IRIs.To_UTF_8
+                       (RDF.Terms.IRI_Value (RDF.Quads.Name_Term (Where))),
+                  when RDF.Quads.Blank_Node_Graph_Kind => "a blank node"));
+      end Note;
+   begin
+      RDF.Datasets.Iterate (Data, Note'Access);
+   end;
+
+   ---------------------------------------------------------------------
+   Heading ("Bound the work and report what it cost");
+   declare
+      Limits : constant RDF.Turtle_Parsers.Parse_Limits :=
+        (Maximum_Bytes       => 1_024 * 1_024,
+         Maximum_Quads       => 1_000,   --  zero would mean no limit
+         Maximum_Nesting     => 64,
+         Maximum_Token_Bytes => 64 * 1_024,
+         Maximum_Prefixes    => 256);
+      Sink   : Collector;
+      Parser : RDF.Turtle_Parsers.Parser :=
+        RDF.Turtle_Parsers.Create
+          (Source_Name => "example",
+           Base_IRI    => "http://example.org/",
+           Limits      => Limits,
+           Syntax      => RDF.Turtle_Parsers.Turtle_Syntax);
+   begin
+      RDF.Turtle_Parsers.Feed (Parser, Document, Sink);
+      if RDF.Turtle_Parsers.Finish (Parser, Sink)
+         = RDF.Turtle_Parsers.Parse_Succeeded
+      then
+         declare
+            Cost : constant RDF.Turtle_Parsers.Work_Statistics :=
+              RDF.Turtle_Parsers.Work (Parser);
+         begin
+            IO.Put_Line
+              ("  held at most" & Cost.Maximum_Pending_Bytes'Image
+               & " bytes for" & Cost.Statements_Parsed'Image
+               & " statements");
+         end;
+      end if;
+   end;
+
+   ---------------------------------------------------------------------
+   Heading ("Build every kind of term");
+   declare
+      function I (Value : String) return RDF.IRIs.IRI
+      is (RDF.IRIs.From_UTF_8 (Value));
+
+      Named    : constant RDF.Terms.Term :=
+        RDF.Terms.IRI_Term (I ("http://example.org/ada"));
+      Unnamed  : constant RDF.Terms.Term := RDF.Terms.Blank_Node ("b1");
+      Plain    : constant RDF.Terms.Term :=
+        RDF.Terms.Literal ("flight", RDF.Terms.String_Datatype);
+      In_English : constant RDF.Terms.Term :=
+        RDF.Terms.Language_Literal ("flight", "en");
+      Directed : constant RDF.Terms.Term :=
+        RDF.Terms.Directional_Literal
+          ("flight", "en", RDF.Terms.Left_To_Right);
+   begin
+      IO.Put_Line
+        ("  kinds: " & RDF.Terms.Kind (Named)'Image
+         & " " & RDF.Terms.Kind (Unnamed)'Image
+         & " " & RDF.Terms.Kind (Plain)'Image);
+      IO.Put_Line
+        ("  the directional literal is"
+         & RDF.Terms.Node_Count (Directed)'Image & " node, depth"
+         & RDF.Terms.Depth (Directed)'Image);
+      IO.Put_Line ("  language: " & RDF.Terms.Language (In_English));
+   end;
+
+   ---------------------------------------------------------------------
+   Heading ("Work with a dataset");
+   declare
+      Data  : RDF.Datasets.Dataset := Read (Document);
+      Count : Natural := 0;
+
+      procedure Tally (Statement : RDF.Quads.Quad);
+
+      procedure Tally (Statement : RDF.Quads.Quad) is
+         pragma Unreferenced (Statement);
+      begin
+         Count := Count + 1;
+      end Tally;
+   begin
+      RDF.Datasets.Iterate (Data, Tally'Access);
+      IO.Put_Line
+        ("  " & Count'Image & " statements in"
+         & RDF.Datasets.Graph_Count (Data)'Image & " graph");
+
+      --  A dataset is a set: inserting the same statement twice leaves one.
+      declare
+         Again : constant Natural := RDF.Datasets.Length (Data);
+      begin
+         RDF.Datasets.Insert
+           (Data,
+            RDF.Quads.Create
+              (Graph     => RDF.Quads.Default_Graph,
+               Subject   =>
+                 RDF.Terms.IRI_Term
+                   (RDF.IRIs.From_UTF_8 ("http://example.org/ada")),
+               Predicate =>
+                 RDF.IRIs.From_UTF_8 ("http://example.org/born"),
+               Object    =>
+                 RDF.Terms.Literal
+                   ("1815-12-10", RDF.Terms.String_Datatype)));
+         IO.Put_Line
+           ("  reinserting one leaves"
+            & RDF.Datasets.Length (Data)'Image & ", was" & Again'Image);
+      end;
+   end;
+
+   ---------------------------------------------------------------------
+   Heading ("Canonicalize and keep the identifier map");
+   declare
+      Data : constant RDF.Datasets.Dataset :=
+        Read ("_:a <http://example.org/p> _:b .",
+              RDF.Turtle_Parsers.NTriples_Syntax);
+      Output : Unbounded.Unbounded_String;
+      Issued : RDF.Canonicalization.Label_Maps.Map;
+      Status : RDF.Canonicalization.Result_Status;
+      use type RDF.Canonicalization.Result_Status;
+   begin
+      RDF.Canonicalization.Canonicalize
+        (Value     => Data,
+         Output    => Output,
+         Labels    => Issued,
+         Status    => Status,
+         Algorithm => RDF.Canonicalization.SHA_256);
+      if Status = RDF.Canonicalization.Canonicalized then
+         for Position in Issued.Iterate loop
+            IO.Put_Line
+              ("  _:" & RDF.Canonicalization.Label_Maps.Key (Position)
+               & " was issued "
+               & RDF.Canonicalization.Label_Maps.Element (Position));
+         end loop;
+      end if;
+   end;
+
+   ---------------------------------------------------------------------
+   Heading ("Walk a Notation3 formula");
+   declare
+      Rule : constant Flyology_N3.Model.Term :=
+        Flyology_N3.Parsers.Parse
+          ("@prefix : <http://example.org/> ." & ASCII.LF
+           & "{ ?who :wrote ?what } => { ?what :by ?who } .",
+           "http://example.org/");
+   begin
+      for Index in 1 .. Flyology_N3.Model.Statement_Count (Rule) loop
+         declare
+            Fact : constant Flyology_N3.Model.Statement :=
+              Flyology_N3.Model.Statement_At (Rule, Index);
+         begin
+            IO.Put_Line
+              ("  subject is a "
+               & Flyology_N3.Model.Kind
+                   (Flyology_N3.Model.Subject (Fact))'Image);
+         end;
+      end loop;
+   end;
+
+   ---------------------------------------------------------------------
+   Heading ("Walk a SPARQL syntax tree");
+   declare
+      Parsed : constant Flyology_SPARQL.Syntax.Query :=
+        Flyology_SPARQL.Parsers.Parse
+          ("PREFIX : <http://example.org/>"
+           & " SELECT ?what WHERE { :ada :wrote ?what }");
+      Where : constant Flyology_SPARQL.Syntax.Node_Reference :=
+        Flyology_SPARQL.Syntax.Where_Clause (Parsed);
+      use type Flyology_SPARQL.Syntax.Node_Kind;
+   begin
+      for Index in 1 ..
+        Flyology_SPARQL.Syntax.Child_Count (Parsed, Where)
+      loop
+         declare
+            Node : constant Flyology_SPARQL.Syntax.Node_Reference :=
+              Flyology_SPARQL.Syntax.Child (Parsed, Where, Index);
+         begin
+            if Flyology_SPARQL.Syntax.Kind (Parsed, Node)
+               = Flyology_SPARQL.Syntax.Triple_Node
+            then
+               IO.Put_Line ("  a triple pattern");
+            end if;
+         end;
+      end loop;
    end;
 
    ---------------------------------------------------------------------

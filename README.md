@@ -114,15 +114,17 @@ statement about two graphs:
 
 ```ada
 Parsed : constant Model.Term :=
-  N3_Parsers.Parse ("{ ?who :wrote ?what } => { ?what :by ?who } .", Base);
+  Flyology_N3.Parsers.Parse
+    ("{ ?who :wrote ?what } => { ?what :by ?who } .", Base);
 ```
 
 SPARQL queries are read and written back as documents. There is no
 evaluation: a query here is something to check, format or inspect.
 
 ```ada
-Parsed : constant Syntax.Query := SPARQL_Parsers.Parse (Query);
-Put (SPARQL_Writers.To_SPARQL (Parsed));
+Parsed : constant Syntax.Query :=
+  Flyology_SPARQL.Parsers.Parse (Query);
+Put (Flyology_SPARQL.Writers.To_SPARQL (Parsed));
 ```
 
 Every snippet above is taken from [`examples/src/examples.adb`](examples/src/examples.adb),
@@ -163,12 +165,14 @@ large:
   an N3 or SPARQL token at all.
 - **Parsing is chunk-fed.** Input to any of the three may be split at any
   byte boundary, including mid-escape and mid-literal, and the result is
-  the one the whole text would have given. Every document in the tests is
-  parsed twice, whole and one byte at a time, and the two must agree --
-  1,161 N3 documents, 317 SPARQL queries and the RDF suite besides. RDF
-  emits statements as they close; N3 and SPARQL build their tree at the
-  end, because a formula and a query are terms and a term means nothing
-  until it is closed.
+  the one the whole text would have given. The N3 and SPARQL conformance
+  harnesses parse every document they accept twice, whole and one byte at
+  a time, and require the two to agree: 1,160 N3 documents and 317 SPARQL
+  queries. The RDF parser's own test suite parses each of its documents
+  both ways; its conformance harness feeds each corpus document once. RDF
+  emits statements as they close, while N3 and SPARQL build their tree at
+  the end, because a formula is a term and a query is a tree, and neither
+  is usable until it closes.
 - **Failures are typed.** Diagnostics carry a code, the grammar production
   that failed, and a full source span with byte, line, and column at both
   ends — not a message string.
@@ -244,7 +248,9 @@ node label.
 
 SPARQL reads what it claims to: the four query forms, the pattern and
 expression grammars, property paths, subqueries, VALUES, EXISTS, dataset
-clauses, aggregates, and the RDF 1.2 term syntax. It also rejects what the
+clauses, aggregates, and the RDF 1.2 term syntax. Property paths are read
+as far as sequence, alternative, inverse and the three cardinality
+operators. It also rejects what the
 grammar alone admits — a projection that repeats a name, an AS that takes a
 name already in scope, a variable projected past a GROUP BY that dropped
 it, a blank node label spanning two basic graph patterns, a reifier or a

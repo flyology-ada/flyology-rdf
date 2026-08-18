@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="How to read, build, write, compare and canonicalize RDF with Flyology RDF, and how to read Notation3 and SPARQL.">
+    <meta name="description" content="How to read, write, compare and canonicalize RDF with Flyology RDF, build terms under a type system that rejects invalid ones, and read Notation3 and SPARQL.">
     <meta name="theme-color" content="#17213d">
     <title>Guide · Flyology RDF</title>
     <link rel="canonical" href="https://rdf.flyology.org/guide/">
@@ -29,7 +29,7 @@
     <main id="main" class="page-shell">
       <header class="doc-hero">
         <div><ol class="breadcrumb" aria-label="Breadcrumb"><li><a href="../">Flyology RDF</a></li><li aria-current="page">Guide</li></ol><h1>Read, write and compare RDF.</h1></div>
-        <p class="doc-hero-copy">Feed a parser what arrives and handle statements as they close, build them by hand under a type system that rules out the invalid ones, and decide whether two graphs say the same thing.</p>
+        <p class="doc-hero-copy">Feed a parser input as it arrives and handle statements as they close. Build terms under a type system that rules out the invalid ones. Decide whether two graphs denote the same thing.</p>
       </header>
 
       <div class="docs-layout">
@@ -37,259 +37,303 @@
           <p class="toc-title">On this page</p>
           <ol>
             <li><a href="#install">Add the crates</a></li>
-            <li><a href="#architecture">How it fits together</a></li>
+            <li><a href="#architecture">How the parts fit together</a></li>
             <li><a href="#reading">Read a document</a></li>
-            <li><a href="#formats">The four RDF syntaxes</a></li>
-            <li><a href="#graphs">Named graphs</a></li>
-            <li><a href="#chunks">Input that arrives in pieces</a></li>
-            <li><a href="#diagnostics">Diagnostics</a></li>
-            <li><a href="#limits">Limits and cooperative work</a></li>
-            <li><a href="#terms">Terms</a></li>
-            <li><a href="#datasets">Datasets</a></li>
-            <li><a href="#writing">Write</a></li>
+            <li><a href="#formats">The four supported syntaxes</a></li>
+            <li><a href="#graphs">Read named graphs</a></li>
+            <li><a href="#chunks">Feed input in pieces</a></li>
+            <li><a href="#diagnostics">Read a diagnostic</a></li>
+            <li><a href="#limits">Set limits and yield</a></li>
+            <li><a href="#terms">Build terms and datasets</a></li>
+            <li><a href="#writing">Write a document</a></li>
             <li><a href="#comparing">Compare two graphs</a></li>
-            <li><a href="#codec">The binary encoding</a></li>
-            <li><a href="#n3">Notation3</a></li>
-            <li><a href="#sparql">SPARQL</a></li>
+            <li><a href="#codec">Encode a term in binary</a></li>
+            <li><a href="#n3">Read Notation3</a></li>
+            <li><a href="#sparql">Read SPARQL</a></li>
           </ol>
         </nav>
 
         <article class="prose">
-          <aside class="callout callout-teal"><span class="callout-symbol" aria-hidden="true">i</span><p>Every example here is taken from <a href="https://github.com/flyology-ada/flyology-rdf/blob/main/examples/src/examples.adb"><code>examples/src/examples.adb</code></a>, which CI compiles and runs. An example that nothing builds stops being true without anyone noticing.</p></aside>
+          <aside class="callout callout-teal"><span class="callout-symbol" aria-hidden="true">i</span><p>Every example on this page is taken from <a href="https://github.com/flyology-ada/flyology-rdf/blob/main/examples/src/examples.adb"><code>examples/src/examples.adb</code></a>, which CI compiles and runs. An example that nothing builds can become false without anyone noticing.</p></aside>
 
-          <h2 id="install">Add the crates</h2>
-          <p>Three crates, taken separately. <code>flyology_rdf</code> stands alone; the other two depend on it for terms and for the shared scanner.</p>
-          <figure class="code-panel"><figcaption>alire.toml</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-toml">[[depends-on]]
+<section id="install">
+            <span class="step-label">STEP 01</span>
+            <h2>Add the crates to an Alire application</h2>
+            <p>Configure the Flyology organization index, then let Alire resolve the crates as ordinary dependencies. <code>flyology_rdf</code> depends only on <code>flyology_iri</code>; <code>flyology_n3</code> and <code>flyology_sparql</code> depend on it for terms and for the shared scanner.</p>
+            <figure class="code-panel"><figcaption>Flyology organization index</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code>alr index --reset-community
+alr index --add=git+https://github.com/flyology-ada/alire-index.git \
+  --name=flyology --before=community
+alr with flyology_rdf</code></pre></figure>
+            <p>Add <code>flyology_n3</code> or <code>flyology_sparql</code> the same way when you need them.</p>
+            <figure class="code-panel"><figcaption>alire.toml</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-toml">[[depends-on]]
 flyology_rdf = "*"
 flyology_n3 = "*"        --  optional
 flyology_sparql = "*"    --  optional</code></pre></figure>
-          <p>The library has no runtime dependency and no tasking. Its only concession to a scheduler is an optional cooperative-yield callback, so it runs the same in a plain sequential program and inside a lightweight-task runtime.</p>
-
-          <h2 id="architecture">How it fits together</h2>
-          <p>Four stages, and only the middle two are yours to think about.</p>
-          <div class="decision-list"><dl>
-            <div class="decision-row"><dt>One scanner</dt><dd>Token boundaries are decided in exactly one place for all three grammars, with a dialect switch. Deciding them twice is what produces a family of conformance bugs: a scanner that recognises <code>PREFIX</code> by looking ahead misreads a prefixed name whose prefix is <code>prefix</code>.</dd></div>
-            <div class="decision-row"><dt>A parser you feed</dt><dd>The parser holds at most one partial token plus the statement it is assembling. It does not hold the document, and it does not hold what it has already given you.</dd></div>
-            <div class="decision-row"><dt>A sink you write</dt><dd>Events arrive as they complete: a graph declaration, a statement, a diagnostic. What happens to them is entirely your decision &mdash; collect, stream onward, or count and discard.</dd></div>
-            <div class="decision-row"><dt>Terms as a flat vector</dt><dd>A term is one allocation: nodes in child-before-parent order with every reference an index. No cycle is representable, and traversing a nested triple term is iterative and bounded rather than recursive.</dd></div>
-          </dl></div>
-
-          <h2 id="reading">Read a document</h2>
-          <p>Implement <code>Event_Sink</code>. Only <code>On_Quad</code> usually matters; the other two have null defaults you can leave alone.</p>
-          <figure class="code-panel"><figcaption>a sink that collects</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">type Collector is limited new Turtle_Parsers.Event_Sink with record
-   Data : Datasets.Dataset := Datasets.Empty;
+            <p><code>flyology_rdf</code> has no runtime dependency and no tasking. Its only scheduler-related feature is an optional cooperative-yield callback, so it runs the same in a plain sequential program and inside a lightweight-task runtime.</p>
+          </section>
+<section id="architecture">
+            <span class="step-label">STEP 02</span>
+            <h2>How the parts fit together</h2>
+            <p>The pipeline has four parts, and only the middle two concern you.</p>
+            <div class="decision-list"><dl>
+              <div class="decision-row"><dt>One scanner</dt><dd>The scanner decides token boundaries in one place for all three grammars, with a dialect switch. Deciding them twice produces a family of conformance bugs: a scanner that recognizes <code>PREFIX</code> by looking ahead misreads a prefixed name whose prefix is <code>prefix</code>.</dd></div>
+              <div class="decision-row"><dt>A parser you feed</dt><dd>The parser holds at most one partial token and the statement it is assembling. It does not hold the document, and it does not hold what it has already given you.</dd></div>
+              <div class="decision-row"><dt>A sink you write</dt><dd>Events arrive as they complete: a graph declaration, a statement, a diagnostic. You decide what happens to them: collect, stream onward, or count and discard.</dd></div>
+              <div class="decision-row"><dt>Terms as a flat vector</dt><dd>A term is one allocation, with nodes in child-before-parent order and every reference an index. No cycle is representable, and a walk over a nested triple term is index arithmetic.</dd></div>
+            </dl></div>
+          </section>
+<section id="reading">
+            <span class="step-label">STEP 03</span>
+            <h2>Read a document</h2>
+            <p>Implement <a href="../api/ba45629a80ca48b4134c300c0a1fdfc1ae8441bc385aacfccc2927a8dae97448.html#7cb5fd899a4e8907743e50e8f461a868f876d8b9eedb5690f8ab06ddc0af12b6"><code>Event_Sink</code></a>. All three callbacks are abstract, so you must override each one. Usually only <a href="../api/ba45629a80ca48b4134c300c0a1fdfc1ae8441bc385aacfccc2927a8dae97448.html#31a607640b790ce708e062a33739f9b15d0198468951606343ed22866e574859"><code>On_Quad</code></a> carries logic; this collector overrides the other two as null procedures and stores each statement in a <a href="../api/79eb335096aa04efe14e10ff7a732941757997dbfe2c92b93c3674137b723ae1.html#46b6473a5ae29ef43586fe401412e303b5bf8c1cff5024bb2e2b41aa6aab65aa"><code>Dataset</code></a>, the set covered in step 09.</p>
+            <figure class="code-panel"><figcaption>a sink that collects</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">type Collector is limited new RDF.Turtle_Parsers.Event_Sink with record
+   Data : RDF.Datasets.Dataset := RDF.Datasets.Empty;
 end record;
 
 overriding procedure On_Graph_Declaration
   (Target : in out Collector;
-   Graph  : Quads.Graph_Name;
-   Span   : Turtle_Parsers.Source_Span) is null;
+   Graph  : RDF.Quads.Graph_Name;
+   Span   : RDF.Turtle_Parsers.Source_Span) is null;
 
 overriding procedure On_Diagnostic
   (Target : in out Collector;
-   Value  : Turtle_Parsers.Parse_Diagnostic) is null;
+   Value  : RDF.Turtle_Parsers.Parse_Diagnostic) is null;
 
 overriding procedure On_Quad
   (Target : in out Collector;
-   Value  : Quads.Quad;
-   Span   : Turtle_Parsers.Source_Span)
+   Value  : RDF.Quads.Quad;
+   Span   : RDF.Turtle_Parsers.Source_Span)
 is
 begin
-   Datasets.Insert (Target.Data, Value);
+   RDF.Datasets.Insert (Target.Data, Value);
 end On_Quad;</code></pre></figure>
-          <p>Then create a parser, feed it, and finish it. <code>Finish</code> is what tells you whether the document was well formed; it is not optional.</p>
-          <figure class="code-panel"><figcaption>reading a whole document</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Sink   : Collector;
-Parser : Turtle_Parsers.Parser :=
-  Turtle_Parsers.Create
-    (Source_Name =&gt; "example.ttl",
+            <p>Create a parser, feed it, and finish it. <a href="../api/ba45629a80ca48b4134c300c0a1fdfc1ae8441bc385aacfccc2927a8dae97448.html#dbed481fb197676229ce61042d9ef26c8793f0fda10f6271c1ed6ed208657fcb"><code>Finish</code></a> reports whether the document was well formed; you must call it.</p>
+            <figure class="code-panel"><figcaption>reading a whole document</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Sink   : Collector;
+Parser : RDF.Turtle_Parsers.Parser :=
+  RDF.Turtle_Parsers.Create
+    (Source_Name =&gt; "example",
      Base_IRI    =&gt; "http://example.org/",
-     Syntax      =&gt; Turtle_Parsers.Turtle_Syntax);
+     Syntax      =&gt; RDF.Turtle_Parsers.Turtle_Syntax);
 begin
-   Turtle_Parsers.Feed (Parser, Document, Sink);
-   if Turtle_Parsers.Finish (Parser, Sink)
-      = Turtle_Parsers.Parse_Succeeded
+   RDF.Turtle_Parsers.Feed (Parser, Document, Sink);
+   if RDF.Turtle_Parsers.Finish (Parser, Sink)
+      = RDF.Turtle_Parsers.Parse_Succeeded
    then
       ...
    end if;</code></pre></figure>
-          <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p>If a sink callback raises, the exception propagates unchanged and the parser is poisoned: no later <code>Feed</code> emits anything and <code>Finish</code> reports failure. A sink that fails cannot be half-applied.</p></aside>
-
-          <h2 id="formats">The four RDF syntaxes</h2>
-          <p>One parser reads all four. The grammar is chosen at <code>Create</code> and cannot change mid-document, because the syntax decides what a token even is.</p>
-          <div class="decision-list"><dl>
-            <div class="decision-row"><dt><code>Turtle_Syntax</code></dt><dd>Prefixes, collections, property lists, the RDF 1.2 term syntax. One graph: a graph block is a syntax error.</dd></div>
-            <div class="decision-row"><dt><code>TriG_Syntax</code></dt><dd>Turtle plus named graph blocks. This is the default, because it is the syntax that can express everything a dataset holds.</dd></div>
-            <div class="decision-row"><dt><code>NTriples_Syntax</code></dt><dd>One statement per line, no prefixes, no abbreviation. Nothing is retained between lines, so a stream of them costs nothing to read.</dd></div>
-            <div class="decision-row"><dt><code>NQuads_Syntax</code></dt><dd>N-Triples with a fourth position for the graph name.</dd></div>
-          </dl></div>
-          <figure class="code-panel"><figcaption>choosing the grammar</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">--  Line-based syntaxes can be told apart from the abbreviating ones,
---  which matters when you are deciding how much to buffer.
-if Turtle_Parsers.Is_Line_Based (Syntax) then
+            <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p>If a sink callback raises, the exception propagates unchanged and the parser is poisoned. No later <a href="../api/ba45629a80ca48b4134c300c0a1fdfc1ae8441bc385aacfccc2927a8dae97448.html#7b45c30f934334d9f7d67a165489fe7ac420990c1aff691011bf230b60c25b70"><code>Feed</code></a> emits anything, and <a href="../api/ba45629a80ca48b4134c300c0a1fdfc1ae8441bc385aacfccc2927a8dae97448.html#dbed481fb197676229ce61042d9ef26c8793f0fda10f6271c1ed6ed208657fcb"><code>Finish</code></a> reports failure. The parser therefore cannot report success for a document the sink processed only in part.</p></aside>
+          </section>
+<section id="formats">
+            <span class="step-label">STEP 04</span>
+            <h2>The four supported syntaxes</h2>
+            <p>One parser reads all four. You choose the syntax at <a href="../api/ba45629a80ca48b4134c300c0a1fdfc1ae8441bc385aacfccc2927a8dae97448.html#3beddbf5abb637189d0a660cdacd99bfd2fd7a9cf1ef77ff5808cdd86186eea4"><code>Create</code></a>; it cannot change mid-document, because the syntax decides what a token is.</p>
+            <div class="decision-list"><dl>
+              <div class="decision-row"><dt><a href="../api/ba45629a80ca48b4134c300c0a1fdfc1ae8441bc385aacfccc2927a8dae97448.html#4c6c6d7d17d07f484f6861cd639ad4fec55ae9ece4222141f488fe21fa18ad2f"><code>Turtle_Syntax</code></a></dt><dd>Prefixes, collections, property lists, and the RDF 1.2 term syntax. One graph: a graph block is a syntax error.</dd></div>
+              <div class="decision-row"><dt><code>TriG_Syntax</code></dt><dd>Turtle plus named graph blocks. This is the default, because it is the syntax that can express everything a dataset holds.</dd></div>
+              <div class="decision-row"><dt><code>NTriples_Syntax</code></dt><dd>One statement per line, with no prefixes and no abbreviation. Nothing is retained between lines, so a stream of any length adds nothing to what the parser holds.</dd></div>
+              <div class="decision-row"><dt><code>NQuads_Syntax</code></dt><dd>N-Triples with a fourth position for the graph name.</dd></div>
+            </dl></div>
+            <p><a href="../api/ba45629a80ca48b4134c300c0a1fdfc1ae8441bc385aacfccc2927a8dae97448.html#c1cc2d313e0e18e33f1017dc7c6436e76ccc1163ee930e3f462116ec9354bcb1"><code>Is_Line_Based</code></a> distinguishes the line-based syntaxes from the abbreviating ones. The distinction matters when you decide how much input to buffer.</p>
+            <figure class="code-panel"><figcaption>testing for a line-based syntax</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">if RDF.Turtle_Parsers.Is_Line_Based (Syntax) then
    ...
 end if;</code></pre></figure>
-          <aside class="callout"><span class="callout-symbol" aria-hidden="true">i</span><p>A base IRI is required for relative references and rejected unless it is absolute. Resolution is strict RFC 3986: a reference carrying its own scheme keeps it, and dot segments are removed whether or not it does.</p></aside>
-
-          <h2 id="graphs">Named graphs</h2>
-          <p>Every event carries its graph, so a sink never has to remember which block it is inside.</p>
-          <figure class="code-panel"><figcaption>reading a named graph</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">overriding procedure On_Quad
-  (Target : in out Collector;
-   Value  : Quads.Quad;
-   Span   : Turtle_Parsers.Source_Span)
-is
-   Where : constant Quads.Graph_Name := Quads.Graph (Value);
+            <aside class="callout"><span class="callout-symbol" aria-hidden="true">i</span><p>Relative references require a base IRI, and a non-empty base IRI must be absolute. Resolution follows RFC 3986 strictly: a reference that carries its own scheme keeps that scheme, and resolution removes dot segments in both cases.</p></aside>
+          </section>
+<section id="graphs">
+            <span class="step-label">STEP 05</span>
+            <h2>Read named graphs</h2>
+            <p>Every event carries its graph name through <a href="../api/1d31b544827664c820195a2f624ea4d8a70b97f0d7c0a872b4a1aa5c9130f27e.html#b5781951d1473affb728e62b294a55e68e4b09ff4d8103bf8370dae06c088fe4"><code>Quads.Graph</code></a>, so a sink never has to remember which block it is inside.</p>
+            <figure class="code-panel"><figcaption>reading a named graph</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">procedure Note (Statement : RDF.Quads.Quad) is
+   Where : constant RDF.Quads.Graph_Name :=
+     RDF.Quads.Graph (Statement);
 begin
-   case Quads.Kind (Where) is
-      when Quads.Default_Graph_Kind =&gt; ...
-      when Quads.IRI_Kind           =&gt; ...
-      when Quads.Blank_Node_Kind    =&gt; ...
+   case RDF.Quads.Kind (Where) is
+      when RDF.Quads.Default_Graph_Kind    =&gt; ...
+      when RDF.Quads.IRI_Graph_Kind        =&gt; ...
+      when RDF.Quads.Blank_Node_Graph_Kind =&gt; ...
    end case;
-end On_Quad;</code></pre></figure>
-          <p><code>On_Graph_Declaration</code> fires when a block names a graph, which is what you want if you are mirroring the document's structure rather than its content.</p>
-
-          <h2 id="chunks">Input that arrives in pieces</h2>
-          <p>Call <code>Feed</code> as often as you like. A split may fall anywhere &mdash; inside an escape, inside a literal, between the two bytes of a UTF-8 sequence &mdash; and what comes out does not depend on where it fell.</p>
-          <figure class="code-panel"><figcaption>feeding a byte at a time</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">for Index in Document'Range loop
-   Turtle_Parsers.Feed (Parser, Document (Index .. Index), Sink);
+end Note;</code></pre></figure>
+            <p><a href="../api/ba45629a80ca48b4134c300c0a1fdfc1ae8441bc385aacfccc2927a8dae97448.html#ef22ea0d573c263fcd7b35e69a9d12696d3e4e200f750138110cfac07f623c8e"><code>On_Graph_Declaration</code></a> runs when a block names a graph. Use it when you mirror the document's structure rather than its content.</p>
+          </section>
+<section id="chunks">
+            <span class="step-label">STEP 06</span>
+            <h2>Feed input that arrives in pieces</h2>
+            <p>Call <a href="../api/ba45629a80ca48b4134c300c0a1fdfc1ae8441bc385aacfccc2927a8dae97448.html#7b45c30f934334d9f7d67a165489fe7ac420990c1aff691011bf230b60c25b70"><code>Feed</code></a> as often as you like. A split may fall anywhere: inside an escape, inside a literal, or between the bytes of a UTF-8 sequence. The result does not depend on where it fell.</p>
+            <figure class="code-panel"><figcaption>feeding a byte at a time</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">for Index in Document'Range loop
+   RDF.Turtle_Parsers.Feed (Parser, Document (Index .. Index), Sink);
 end loop;
-Status := Turtle_Parsers.Finish (Parser, Sink);</code></pre></figure>
-          <p>Every document in the test suite is parsed twice, whole and one byte at a time, and the two must agree: 1,050 RDF documents, 1,161 N3 documents and 317 SPARQL queries. Notation3 and SPARQL take chunks too, though they emit nothing as they read &mdash; a formula and a query are terms, and a term means nothing until it is closed.</p>
-
-          <h2 id="diagnostics">Diagnostics</h2>
-          <p>A failure is a value, not a message to match on. It carries what went wrong, which production was being read, and where it was.</p>
-          <figure class="code-panel"><figcaption>reporting a failure</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">overriding procedure On_Diagnostic
+Status := RDF.Turtle_Parsers.Finish (Parser, Sink);</code></pre></figure>
+            <p>The Notation3 and SPARQL conformance harnesses parse every document they accept twice, whole and one byte at a time, and require the two to agree: 1,160 Notation3 documents and 317 SPARQL queries in the current corpora. The RDF parser's own test suite parses each of its documents both ways. Those parsers take chunks through <code>Flyology_N3.Parsers.Create</code> and <code>Flyology_SPARQL.Parsers.Create</code>, though they emit nothing as they read: a formula is a term and a query is a tree, and neither is usable until it closes.</p>
+          </section>
+<section id="diagnostics">
+            <span class="step-label">STEP 07</span>
+            <h2>Read a diagnostic</h2>
+            <p>A <a href="../api/ba45629a80ca48b4134c300c0a1fdfc1ae8441bc385aacfccc2927a8dae97448.html#c61c8322a28514e530948362510362b27c8f0a023227caed18d2346b95863354"><code>Parse_Diagnostic</code></a> is a value, not a message to match on. It carries what went wrong, the production the parser was reading, and where the failure occurred.</p>
+            <figure class="code-panel"><figcaption>reporting a failure</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">overriding procedure On_Diagnostic
   (Target : in out Collector;
-   Value  : Turtle_Parsers.Parse_Diagnostic)
+   Value  : RDF.Turtle_Parsers.Parse_Diagnostic)
 is
-   Where : constant Turtle_Parsers.Source_Span :=
-     Turtle_Parsers.Span (Value);
+   Where : constant RDF.Turtle_Parsers.Source_Span :=
+     RDF.Turtle_Parsers.Span (Value);
 begin
    Put_Line
-     (Turtle_Parsers.Source_Name (Value)
+     (RDF.Turtle_Parsers.Source_Name (Value)
       &amp; ":" &amp; Where.Start_Line'Image
       &amp; ":" &amp; Where.Start_Column'Image
-      &amp; ": " &amp; Turtle_Parsers.Code (Value)'Image
-      &amp; " in " &amp; Turtle_Parsers.Production (Value)'Image);
+      &amp; ": " &amp; RDF.Turtle_Parsers.Code (Value)'Image
+      &amp; " in " &amp; RDF.Turtle_Parsers.Production (Value)'Image);
 end On_Diagnostic;</code></pre></figure>
-          <p>The span is given at both ends, in bytes as well as lines and columns, so a caller can underline the offending region without rescanning the input.</p>
-
-          <h2 id="limits">Limits and cooperative work</h2>
-          <p>Every bound is declared and none of them is a guess. Reaching one is a diagnostic like any other, not an exception and not a crash.</p>
-          <figure class="code-panel"><figcaption>bounding a parse</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Limits : constant Turtle_Parsers.Parse_Limits :=
-  (Maximum_Bytes       =&gt; 8 * 1_024 * 1_024,
-   Maximum_Quads       =&gt; 100_000,   --  zero means no limit
+            <p>The <a href="../api/ba45629a80ca48b4134c300c0a1fdfc1ae8441bc385aacfccc2927a8dae97448.html#fa1361bc925f21a13f8a37bb626b0543742fab0fb277977756009c796e2eacce"><code>Source_Span</code></a> reports both ends, in bytes as well as lines and columns, so a caller can underline the offending region without rescanning the input.</p>
+          </section>
+<section id="limits">
+            <span class="step-label">STEP 08</span>
+            <h2>Set limits and yield</h2>
+            <p>Every limit is declared, and none of them is a guess. Reaching one produces a diagnostic like any other, not an exception and not a crash.</p>
+            <figure class="code-panel"><figcaption>limiting a parse</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Limits : constant RDF.Turtle_Parsers.Parse_Limits :=
+  (Maximum_Bytes       =&gt; 1_024 * 1_024,
+   Maximum_Quads       =&gt; 1_000,   --  zero means no limit
    Maximum_Nesting     =&gt; 64,
    Maximum_Token_Bytes =&gt; 64 * 1_024,
    Maximum_Prefixes    =&gt; 256);</code></pre></figure>
-          <p>Long inputs can hand control back. Pass a <code>Work_Checkpoint</code> and the parser calls it every <code>Work_Checkpoint_Interval</code> units of work, which is how a lightweight task yields without the library knowing anything about the scheduler.</p>
-          <figure class="code-panel"><figcaption>what a parse cost</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Stats : constant Turtle_Parsers.Work_Statistics :=
-  Turtle_Parsers.Work (Parser);
+            <p>The parser can hand control back during a long input. Pass a <a href="../api/ba45629a80ca48b4134c300c0a1fdfc1ae8441bc385aacfccc2927a8dae97448.html#6b2def48c523516cf19413f7174460042f3022de48286a24e055a11677e4ee30"><code>Work_Checkpoint</code></a> and the parser calls it every <a href="../api/ba45629a80ca48b4134c300c0a1fdfc1ae8441bc385aacfccc2927a8dae97448.html#8365cd9b6342a06a4c99cc9418b06fdcd7471d4d84307c58a84bbe4dfecbfe61"><code>Work_Checkpoint_Interval</code></a> units of work. A lightweight task yields inside that callback, so the library needs no knowledge of the scheduler.</p>
+            <figure class="code-panel"><figcaption>what a parse cost</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Cost : constant RDF.Turtle_Parsers.Work_Statistics :=
+  RDF.Turtle_Parsers.Work (Parser);
 --  Bytes_Scanned, Tokens_Scanned, Statements_Parsed,
---  Checkpoint_Calls, Maximum_Pending_Bytes, Maximum_Pending_Tokens</code></pre></figure>
-          <aside class="callout"><span class="callout-symbol" aria-hidden="true">i</span><p><code>Maximum_Pending_Bytes</code> is the honest answer to "how much does this actually hold?" &mdash; it is the high-water mark of the buffer, which for well-formed input is one partial token.</p></aside>
-
-          <h2 id="terms">Terms</h2>
-          <p>Constructors enforce every rule, so an invalid term cannot be built. A predicate is typed as an IRI rather than a term, which makes a literal in predicate position a compile error rather than a runtime check.</p>
-          <figure class="code-panel"><figcaption>building terms</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">IRI_Node : constant Terms.Term :=
-  Terms.IRI_Term (IRIs.From_UTF_8 ("http://example.org/ada"));
-Blank    : constant Terms.Term := Terms.Blank_Node ("b1");
-Plain    : constant Terms.Term :=
-  Terms.Literal ("flight", Terms.String_Datatype);
-Tagged   : constant Terms.Term :=
-  Terms.Language_Literal ("flight", "en");
-Directed : constant Terms.Term :=
-  Terms.Directional_Literal ("flight", "en", Terms.Left_To_Right);</code></pre></figure>
-          <p>RDF 1.2 triple terms nest, and nesting is bounded: <code>Terms.Depth</code> and <code>Terms.Node_Count</code> report what a term costs, and the constructors refuse anything past the model's limits.</p>
-
-          <h2 id="datasets">Datasets</h2>
-          <p>A dataset is a set, not a list: inserting the same statement twice leaves one. Iteration is deterministic, so two runs over the same data visit it in the same order.</p>
-          <figure class="code-panel"><figcaption>working with a dataset</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Datasets.Insert (Data, Statement);
-Datasets.Delete (From =&gt; Data, Value =&gt; Statement);
-
-Count  : constant Natural := Datasets.Length (Data);
-Graphs : constant Natural := Datasets.Graph_Count (Data);
-
-Datasets.Iterate (Data, Handle'Access);
-Datasets.Iterate_Graph (Data, Name, Handle'Access);</code></pre></figure>
-
-          <h2 id="writing">Write</h2>
-          <figure class="code-panel"><figcaption>writing Turtle</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Prefixes : Turtle_Writers.Prefix_Map := Turtle_Writers.No_Prefixes;
+--  Checkpoint_Calls, Maximum_Pending_Bytes,
+--  Maximum_Pending_Tokens</code></pre></figure>
+            <aside class="callout"><span class="callout-symbol" aria-hidden="true">i</span><p><a href="../api/ba45629a80ca48b4134c300c0a1fdfc1ae8441bc385aacfccc2927a8dae97448.html#922a46080644895d5092a9e3f6bdc3b76e6a885d029479e670fa4b63be6e6bfc"><code>Maximum_Pending_Bytes</code></a> reports how much the parser held: the high-water mark of the buffer, which for well-formed input is one partial token.</p></aside>
+          </section>
+<section id="terms">
+            <span class="step-label">STEP 09</span>
+            <h2>Build terms and datasets</h2>
+            <p>Constructors enforce every rule, so you cannot build an invalid term. A predicate is typed as an IRI rather than a term, which makes a literal in predicate position a compile error.</p>
+            <figure class="code-panel"><figcaption>building terms</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Named    : constant RDF.Terms.Term :=
+  RDF.Terms.IRI_Term
+    (RDF.IRIs.From_UTF_8 ("http://example.org/ada"));
+Unnamed  : constant RDF.Terms.Term := RDF.Terms.Blank_Node ("b1");
+Plain    : constant RDF.Terms.Term :=
+  RDF.Terms.Literal ("flight", RDF.Terms.String_Datatype);
+Directed : constant RDF.Terms.Term :=
+  RDF.Terms.Directional_Literal
+    ("flight", "en", RDF.Terms.Left_To_Right);</code></pre></figure>
+            <p>RDF 1.2 triple terms nest, and the nesting is bounded. <a href="../api/03a70487247043715c64eb55e1f4ebe4fa0cbebcb8eaaad2c25ca4637e9760d8.html#806f3b8b9a4010115d2e9d8a1a6b2b40551fe8f9240a16951d20283b957078ec"><code>Terms.Depth</code></a> and <a href="../api/03a70487247043715c64eb55e1f4ebe4fa0cbebcb8eaaad2c25ca4637e9760d8.html#a7ffd04dd9d37210495b0106b0c152081296da3ae6be63c91cdf9046dc4e526a"><code>Terms.Node_Count</code></a> report what a term costs, and the constructors refuse anything past the model's limits.</p>
+            <p>A dataset has set semantics: inserting the same statement twice leaves one. Iteration is deterministic, so two runs over the same data visit it in the same order. <a href="../api/79eb335096aa04efe14e10ff7a732941757997dbfe2c92b93c3674137b723ae1.html#b42c9e5ff3e88069472a1d4c20bde43f9da85afb3bf689ac869ee7bba9215911"><code>Iterate</code></a> takes a procedure that accepts one <a href="../api/1d31b544827664c820195a2f624ea4d8a70b97f0d7c0a872b4a1aa5c9130f27e.html#719d1a6d34cdc241fdd430b13bd80e401b69271184edff176df57aa51678d982"><code>Quad</code></a>.</p>
+            <figure class="code-panel"><figcaption>working with a dataset</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">procedure Tally (Statement : RDF.Quads.Quad) is
 begin
-   Turtle_Writers.Bind (Prefixes, "", "http://example.org/");
-   Put (Turtle_Writers.To_Turtle (Data, Prefixes));</code></pre></figure>
-          <figure class="code-panel"><figcaption>the output</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code>@prefix : &lt;http://example.org/&gt; .
+   Count := Count + 1;
+end Tally;
+
+RDF.Datasets.Insert (Data, Statement);
+RDF.Datasets.Delete (From =&gt; Data, Value =&gt; Statement);
+RDF.Datasets.Iterate (Data, Tally'Access);
+
+Total  : constant Natural := RDF.Datasets.Length (Data);
+Graphs : constant Natural := RDF.Datasets.Graph_Count (Data);</code></pre></figure>
+            <p><a href="../api/79eb335096aa04efe14e10ff7a732941757997dbfe2c92b93c3674137b723ae1.html#2549af3acba93db6bf765085eb778b92e5574715a15e295e03871c04fedab43e"><code>Iterate_Graph</code></a> visits one named graph, and <a href="../api/79eb335096aa04efe14e10ff7a732941757997dbfe2c92b93c3674137b723ae1.html#7d18e809eb792a656f55a939a9d95e2814aa177a9127283f318d3ae693f67d53"><code>Delete</code></a> removes a single statement.</p>
+          </section>
+<section id="writing">
+            <span class="step-label">STEP 10</span>
+            <h2>Write a document</h2>
+            <p>A writer turns a dataset back into text. Bind the prefixes the output should use with <a href="../api/b4d1483d164a22305e7bf57706a9ca9ffca13cb9890cc89dff8dbd7ca31a369b.html#2e02ced97194763cc344de13d90eb2cecb6bbc64cc479ca3f5ed4ed3a00738ac"><code>Bind</code></a>, then serialize. <code>Data</code> here is the dataset the collector filled in step 03.</p>
+            <figure class="code-panel"><figcaption>writing Turtle</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Prefixes : RDF.Turtle_Writers.Prefix_Map :=
+  RDF.Turtle_Writers.No_Prefixes;
+begin
+   RDF.Turtle_Writers.Bind (Prefixes, "", "http://example.org/");
+   Put (RDF.Turtle_Writers.To_Turtle (Data, Prefixes));</code></pre></figure>
+            <figure class="code-panel"><figcaption>the output</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code>@prefix : &lt;http://example.org/&gt; .
 
 :ada :born "1815-12-10" ;
     :wrote :notes .
 
 :notes :about "flight"@en .</code></pre></figure>
-          <p><code>To_TriG</code> writes named graphs as blocks; <code>To_Turtle</code> raises if the dataset holds one, because Turtle cannot say it. For a line at a time there is <code>NQuads_Writers.Write_Quad</code>, which is what canonical output and dataset comparison are built on.</p>
-          <aside class="callout"><span class="callout-symbol" aria-hidden="true">i</span><p>A prefixed name is written only when it reads back as one. Anything the grammar would not accept is written as a full IRI instead, which is always legal.</p></aside>
-
-          <h2 id="comparing">Compare two graphs</h2>
-          <p>Two documents that differ only in their blank node labels denote the same thing, and comparing their text will not tell you so. Canonicalization decides it: every blank node is labelled from its position in the graph rather than from what it was called.</p>
-          <figure class="code-panel"><figcaption>comparing two graphs</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">if Canonicalization.Is_Isomorphic (Left, Right) then
+            <p><a href="../api/b4d1483d164a22305e7bf57706a9ca9ffca13cb9890cc89dff8dbd7ca31a369b.html#229a129be122c258fa6424fbfa0103f1e19c4f759337a5a96b22b93b08116be1"><code>To_TriG</code></a> writes named graphs as blocks. If the dataset holds a named graph, <a href="../api/b4d1483d164a22305e7bf57706a9ca9ffca13cb9890cc89dff8dbd7ca31a369b.html#156e2f43d00140401390f48c9681311f88049031b442d73a8fdc92f334126a20"><code>To_Turtle</code></a> raises <code>Constraint_Error</code>, because Turtle cannot express one. <a href="../api/afff6ac83269b55b545d7df0eee67211aa6b73b9528a8464d7fc5018e7f025ab.html#9fbe06e446ba75564795895753116bbfe7c1a097465bd22c9d223ddd46caa5bf"><code>NQuads_Writers.Write_Quad</code></a> writes one statement per line; canonical output and dataset comparison are built on it.</p>
+            <aside class="callout"><span class="callout-symbol" aria-hidden="true">i</span><p>The writer emits a prefixed name only when it reads back as one. Anything the grammar would not accept, it writes as a full IRI instead, which is always legal.</p></aside>
+          </section>
+<section id="comparing">
+            <span class="step-label">STEP 11</span>
+            <h2>Compare two graphs</h2>
+            <p>Two documents that differ only in their blank node labels denote the same thing, and comparing their text will not tell you so. Canonicalization decides it: every blank node is labeled from its position in the graph rather than from what it was called.</p>
+            <figure class="code-panel"><figcaption>comparing two graphs</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">if RDF.Canonicalization.Is_Isomorphic (Left, Right) then
    ...
 end if;
 
-Put (Canonicalization.To_Canonical_NQuads (Left));</code></pre></figure>
-          <figure class="code-panel"><figcaption>the canonical form</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code>_:c14n0 &lt;http://example.org/q&gt; "x" .
+Put (RDF.Canonicalization.To_Canonical_NQuads (Left));</code></pre></figure>
+            <figure class="code-panel"><figcaption>the canonical form</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code>_:c14n0 &lt;http://example.org/q&gt; "x" .
 _:c14n1 &lt;http://example.org/p&gt; _:c14n0 .</code></pre></figure>
-          <p>The identifier map is available when you need to say which node in the output was which node in the input, and the digest is part of the request because RDFC-1.0 admits two and the labels differ between them.</p>
-          <figure class="code-panel"><figcaption>canonicalizing with the map</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Canonicalization.Canonicalize
+            <p><a href="../api/df6d8acf35e2dd2869ce31cc0d792d00c0c16852bb670b04e60f6edbb4dbafe3.html#9721f50c5806b612b2a83bc2d6debc10c2102e0de646aebddbd61051e9fb5c65"><code>Is_Isomorphic</code></a> and <a href="../api/df6d8acf35e2dd2869ce31cc0d792d00c0c16852bb670b04e60f6edbb4dbafe3.html#2da11d69f93d454bf56ade3ccd83f4628b121d6964aebb92693bc2988e87b34e"><code>To_Canonical_NQuads</code></a> are the function forms, and they raise <code>Work_Limit_Error</code> when the bound is reached. The procedure form reports instead, and it also yields the identifier map when you need to say which node in the output was which node in the input. The digest is part of the request because RDFC-1.0 admits two digests, and the issued labels differ between them.</p>
+            <figure class="code-panel"><figcaption>canonicalizing with the map</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">RDF.Canonicalization.Canonicalize
   (Value     =&gt; Data,
    Output    =&gt; Text,
-   Labels    =&gt; Issued,     --  input label to issued identifier
+   Labels    =&gt; Issued,
    Status    =&gt; Status,
-   Algorithm =&gt; Canonicalization.SHA_256);</code></pre></figure>
-          <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p>The algorithm has a documented adversarial case: telling apart blank nodes that look alike from every direction requires trying permutations, and a dataset can be built to make that combinatorial. Canonicalization therefore takes a work bound and reports <code>Work_Limit_Reached</code> rather than running until something else gives out.</p></aside>
-
-          <h2 id="codec">The binary encoding</h2>
-          <p>A compact, self-delimiting encoding for a term or a statement, for when you are putting one in a cache or on a wire rather than in a document.</p>
-          <figure class="code-panel"><figcaption>round-tripping a term</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Encoded  : constant String := Codecs.Encode (Original);
-Restored : constant Terms.Term := Codecs.Decode_Term (Encoded);</code></pre></figure>
-          <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p>The binary format is explicitly unstable and stays that way after <code>v0.1.0</code>. Encode into a cache you can rebuild, not into storage you must migrate.</p></aside>
-
-          <h2 id="n3">Notation3</h2>
-          <p>N3 says things RDF cannot. A formula is a term, so a rule is an ordinary statement whose subject and object happen to be graphs.</p>
-          <figure class="code-panel"><figcaption>a rule in Notation3</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Rule : constant Model.Term :=
-  N3_Parsers.Parse
-    ("{{ ?who :wrote ?what }} =&gt; {{ ?what :by ?who }} .", Base);</code></pre></figure>
-          <p>The result is the document as a formula, so reading it is the same walk at every level.</p>
-          <figure class="code-panel"><figcaption>walking a formula</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">for Index in 1 .. Model.Statement_Count (Rule) loop
+   Algorithm =&gt; RDF.Canonicalization.SHA_256);</code></pre></figure>
+            <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p>The algorithm has a documented adversarial case. Telling apart blank nodes that look alike from every direction requires trying permutations, and a dataset can be built to make that combinatorial. <a href="../api/df6d8acf35e2dd2869ce31cc0d792d00c0c16852bb670b04e60f6edbb4dbafe3.html#fa197c290611632a4138a4a9c9065203bd04c8ef58526be34fe3a92985d82e86"><code>Canonicalize</code></a> therefore takes a work limit and reports <a href="../api/df6d8acf35e2dd2869ce31cc0d792d00c0c16852bb670b04e60f6edbb4dbafe3.html#7e5ccede8f9b24a6a5c1c8ef033ac4f4a722ffdf72eadbe0caec99b7c201f7f5"><code>Work_Limit_Reached</code></a> rather than running until memory or time is exhausted.</p></aside>
+          </section>
+<section id="codec">
+            <span class="step-label">STEP 12</span>
+            <h2>Encode a term in binary</h2>
+            <p>The binary term format is a compact, self-delimiting encoding for a term or a statement. Use it when a value goes into a cache or onto a wire rather than into a document.</p>
+            <figure class="code-panel"><figcaption>round-tripping a term</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Encoded  : constant String := RDF.Codecs.Encode (Original);
+Restored : constant RDF.Terms.Term :=
+  RDF.Codecs.Decode_Term (Encoded);</code></pre></figure>
+            <aside class="callout"><span class="callout-symbol" aria-hidden="true">!</span><p>The binary term format is explicitly unstable and remains unstable after <code>v0.1.0</code>. Encode into a cache you can rebuild, not into storage you must migrate.</p></aside>
+          </section>
+<section id="n3">
+            <span class="step-label">STEP 13</span>
+            <h2>Read Notation3</h2>
+            <p>Notation3 expresses statements RDF cannot. A formula is a term, so a rule is an ordinary statement whose subject and object are formulas.</p>
+            <figure class="code-panel"><figcaption>a rule in Notation3</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Rule : constant Flyology_N3.Model.Term :=
+  Flyology_N3.Parsers.Parse
+    ("@prefix : &lt;http://example.org/&gt; ." &amp; ASCII.LF
+     &amp; "{ ?who :wrote ?what } =&gt; { ?what :by ?who } .",
+     "http://example.org/");</code></pre></figure>
+            <p>The result is the document as a formula, so walking it is the same at every level.</p>
+            <figure class="code-panel"><figcaption>walking a formula</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">for Index in 1 .. Flyology_N3.Model.Statement_Count (Rule) loop
    declare
-      Fact : constant Model.Statement := Model.Statement_At (Rule, Index);
+      Fact : constant Flyology_N3.Model.Statement :=
+        Flyology_N3.Model.Statement_At (Rule, Index);
    begin
-      case Model.Kind (Model.Subject (Fact)) is
-         when Model.Formula_Kind  =&gt; ...   --  nested graph
-         when Model.Variable_Kind =&gt; ...   --  ?who
-         when Model.List_Kind     =&gt; ...
-         when Model.RDF_Kind      =&gt; ...   --  an ordinary RDF term
+      case Flyology_N3.Model.Kind
+             (Flyology_N3.Model.Subject (Fact)) is
+         when Flyology_N3.Model.Formula_Kind  =&gt; ...
+         when Flyology_N3.Model.Variable_Kind =&gt; ...
+         when Flyology_N3.Model.List_Kind     =&gt; ...
+         when Flyology_N3.Model.RDF_Kind      =&gt; ...
       end case;
    end;
 end loop;</code></pre></figure>
-
-          <h2 id="sparql">SPARQL</h2>
-          <p>Queries are read and written back as documents. There is no evaluation: a query here is something to check, format or inspect.</p>
-          <figure class="code-panel"><figcaption>reading a query back out</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Parsed : constant Syntax.Query := SPARQL_Parsers.Parse (Text);
+          </section>
+<section id="sparql">
+            <span class="step-label">STEP 14</span>
+            <h2>Read SPARQL</h2>
+            <p>The crate reads and writes queries back as documents. Nothing evaluates them: a query here is something to check, format or inspect.</p>
+            <figure class="code-panel"><figcaption>reading a query back out</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Parsed : constant Flyology_SPARQL.Syntax.Query :=
+  Flyology_SPARQL.Parsers.Parse (Text);
 begin
-   Put (SPARQL_Writers.To_SPARQL (Parsed));</code></pre></figure>
-          <p>The tree is the same flat vector the RDF terms use, so walking it is index arithmetic rather than pointer chasing.</p>
-          <figure class="code-panel"><figcaption>inspecting the tree</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Form  : constant Syntax.Query_Form := Syntax.Form (Parsed);
-Where : constant Syntax.Node_Reference := Syntax.Where_Clause (Parsed);
+   Put (Flyology_SPARQL.Writers.To_SPARQL (Parsed));</code></pre></figure>
+            <p>The tree is the same flat vector the RDF terms use, so a walk is index arithmetic over one allocation.</p>
+            <figure class="code-panel"><figcaption>inspecting the tree</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Where : constant Flyology_SPARQL.Syntax.Node_Reference :=
+  Flyology_SPARQL.Syntax.Where_Clause (Parsed);
 
-for Index in 1 .. Syntax.Child_Count (Parsed, Where) loop
+for Index in 1 ..
+  Flyology_SPARQL.Syntax.Child_Count (Parsed, Where)
+loop
    declare
-      Node : constant Syntax.Node_Reference :=
-        Syntax.Child (Parsed, Where, Index);
+      Node : constant Flyology_SPARQL.Syntax.Node_Reference :=
+        Flyology_SPARQL.Syntax.Child (Parsed, Where, Index);
    begin
-      if Syntax.Kind (Parsed, Node) = Syntax.Triple_Node then
+      if Flyology_SPARQL.Syntax.Kind (Parsed, Node)
+         = Flyology_SPARQL.Syntax.Triple_Node
+      then
          ...
       end if;
    end;
 end loop;</code></pre></figure>
-          <p>Coverage is the query language: the four query forms, the pattern and expression grammars, property paths, subqueries, <code>VALUES</code>, <code>EXISTS</code>, dataset clauses, aggregates and the RDF 1.2 term syntax. The parser also rejects what the grammar alone admits &mdash; a projection that repeats a name, an <code>AS</code> that takes a name already in scope, a variable projected past a <code>GROUP BY</code> that dropped it. Deliberately absent: SPARQL Update, and evaluation of any kind.</p>
+            <p>Coverage is the whole query language: the four query forms, the pattern and expression grammars, property paths as far as sequence, alternative, inverse and the three cardinality operators, subqueries, <code>VALUES</code>, <code>EXISTS</code>, dataset clauses, aggregates and the RDF 1.2 term syntax. The parser also rejects what the grammar alone would admit: a projection that repeats a name, an <code>AS</code> that takes a name already in scope, a variable projected past a <code>GROUP BY</code> that dropped it. Deliberately absent: SPARQL Update, federated-query specifics beyond recognising <code>SERVICE</code>, and evaluation of any kind.</p>
+          </section>
         </article>
       </div>
     </main>
-    <footer class="site-footer"><div class="footer-inner"><span>Flyology RDF is experimental. Interfaces, diagnostics and the binary term format may change before <code>v0.1.0</code>.</span><div class="footer-links"><a href="../">Overview</a><a href="../api/">API reference</a><a href="https://github.com/flyology-ada/flyology-rdf">GitHub</a><a href="https://flyology.org/">Flyology Runtime</a></div></div></footer>
+    <footer class="site-footer"><div class="footer-inner"><span>Flyology RDF is experimental. Interfaces and diagnostics may change before <code>v0.1.0</code>; the binary term format stays experimental after it.</span><div class="footer-links"><a href="../">Overview</a><a href="../api/">API reference</a><a href="https://github.com/flyology-ada/flyology-rdf">GitHub</a><a href="https://flyology.org/">Flyology Runtime</a></div></div></footer>
   </body>
 </html>
