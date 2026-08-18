@@ -241,6 +241,11 @@ begin
    --  Rejections
    ------------------------------------------------------------------
    Check_Rejects (EX & "ex:s ex:p", "a statement with no object");
+
+   --  A variable name begins with a name character. SPARQL admits a
+   --  leading digit and N3 does not, and the suite withdrew the one
+   --  test that read otherwise, saying so in as many words.
+   Check_Rejects (EX & "ex:s ex:p ?1 .", "a variable starting with a digit");
    Check_Rejects (EX & "{ ex:a ex:b ex:c ", "an unclosed formula");
    Check_Rejects (EX & "ex:s ex:p ( ex:a ", "an unclosed list");
    Check_Rejects ("ex:s ex:p ex:o .", "an undefined prefix");

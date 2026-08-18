@@ -101,10 +101,11 @@ The N3 suite carries 123 further entries its working group withdrew,
 marked `rdft:approval rdft:Rejected` in the manifest. They are read, run
 and reported like any other entry and counted apart: grading against a
 withdrawn test would measure agreement with a decision its own authors
-reversed. Eleven of them diverge, all cwm-era notation the specification
-did not keep -- `?x^^xsd:dateTime`, `?s@de`, an `id` outside a property
-list. The harness prints each one, marked `[withdrawn]`. No entry in the
-RDF or SPARQL suites carries that status.
+reversed. Twelve of them diverge, all notation the specification did not
+keep -- `?x^^xsd:dateTime`, `?s@de`, an `id` outside a property list, a
+variable whose name begins with a digit. The harness prints each one,
+marked `[withdrawn]`. No entry in the RDF or SPARQL suites carries that
+status.
 
 The canonicalization suite grades the canonical form byte for byte, because
 RDFC-1.0 fixes both the labels and their order. Twenty-one of its entries

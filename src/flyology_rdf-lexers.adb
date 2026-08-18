@@ -1627,6 +1627,13 @@ package body Flyology_RDF.Lexers is
                               or else (Length_Seen = 0
                                        and then not Is_PN_Chars_U (Scalar)
                                        and then not Is_Digit (Scalar)));
+
+                  --  N3 is narrower still: its variable name begins with
+                  --  a name character, never a digit. SPARQL admits one
+                  --  and N3 does not, so the two cannot share this test.
+                  exit when Dialect = N3_Dialect
+                    and then Length_Seen = 0
+                    and then not Is_PN_Chars_U (Scalar);
                   exit when not Is_PN_Chars (Scalar);
                   Append_Scalar (Buffer, Scalar);
                   Step (Scalar, Length);
