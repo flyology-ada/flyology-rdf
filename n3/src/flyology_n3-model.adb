@@ -2,16 +2,20 @@ package body Flyology_N3.Model is
 
    use type Ada.Containers.Count_Type;
 
-   function Root (Value : Term) return Node is (Value.Nodes.Last_Element);
+   --  The root is read through a reference: materializing the node would
+   --  copy its payload -- for an RDF node, the whole wrapped term -- on
+   --  every inspection.
+   function Root_Variant (Value : Node_Vectors.Vector) return Node_Kind
+   is (Value (Value.Last_Index).Variant);
 
-   function Root (Value : Statement) return Node
-   is (Value.Nodes.Last_Element);
+   function Root_Depth (Value : Node_Vectors.Vector) return Natural
+   is (Value (Value.Last_Index).Depth);
 
    procedure Require (Value : Term; Expected : Node_Kind) is
    begin
-      if Root (Value).Variant /= Expected then
+      if Root_Variant (Value.Nodes) /= Expected then
          raise Invalid_Term with
-           "term is " & Root (Value).Variant'Image
+           "term is " & Root_Variant (Value.Nodes)'Image
            & ", not " & Expected'Image;
       end if;
    end Require;
@@ -26,7 +30,9 @@ package body Flyology_N3.Model is
    --  Copy a subtree's nodes into a growing vector, renumbering every index
    --  reference by the offset the copy introduces. This is the one place
    --  the flat representation costs anything, and it is why nothing else
-   --  has to think about aliasing.
+   --  has to think about aliasing. Each node is copied once and renumbered
+   --  where it landed: renumbering first would build a second copy only to
+   --  copy it again.
    procedure Splice
      (Into   : in out Node_Vectors.Vector;
       From   : Node_Vectors.Vector;
@@ -35,40 +41,22 @@ package body Flyology_N3.Model is
       Offset : constant Natural := Natural (Into.Length);
    begin
       for Item of From loop
+         Into.Append (Item);
          declare
-            Copy : Node := Item;
+            Landed : Node renames Into (Into.Last_Index);
          begin
-            --  A node has a defaulted discriminant, so its variant
-            --  components cannot be assigned one at a time. Each shifted
-            --  node is built whole instead.
-            case Item.Variant is
+            case Landed.Variant is
                when List_Node | Formula_Node =>
-                  declare
-                     Shifted : Index_Vectors.Vector;
-                  begin
-                     for Child of Item.Children loop
-                        Shifted.Append (Child + Offset);
-                     end loop;
-                     if Item.Variant = List_Node then
-                        Copy := (Variant  => List_Node,
-                                 Depth    => Item.Depth,
-                                 Children => Shifted);
-                     else
-                        Copy := (Variant  => Formula_Node,
-                                 Depth    => Item.Depth,
-                                 Children => Shifted);
-                     end if;
-                  end;
+                  for Child of Landed.Children loop
+                     Child := Child + Offset;
+                  end loop;
                when Statement_Node =>
-                  Copy := (Variant        => Statement_Node,
-                           Depth          => Item.Depth,
-                           Subject_Node   => Item.Subject_Node + Offset,
-                           Predicate_Node => Item.Predicate_Node + Offset,
-                           Object_Node    => Item.Object_Node + Offset);
+                  Landed.Subject_Node := Landed.Subject_Node + Offset;
+                  Landed.Predicate_Node := Landed.Predicate_Node + Offset;
+                  Landed.Object_Node := Landed.Object_Node + Offset;
                when others =>
                   null;
             end case;
-            Into.Append (Copy);
          end;
       end loop;
       Root_At := Natural (Into.Length);
@@ -91,7 +79,7 @@ package body Flyology_N3.Model is
       procedure Mark (At_Index : Positive);
 
       procedure Mark (At_Index : Positive) is
-         Item : constant Node := Source (At_Index);
+         Item : Node renames Source (At_Index);
       begin
          if Needed (At_Index) then
             return;
@@ -124,41 +112,21 @@ package body Flyology_N3.Model is
          end if;
       end loop;
 
+      --  Renumbered where it stands: replacing a node wholesale would
+      --  copy its payload once out and once back in.
       for Position in 1 .. Natural (Into.Length) loop
          declare
-            Item : constant Node := Into (Position);
+            Item : Node renames Into (Position);
          begin
             case Item.Variant is
                when List_Node | Formula_Node =>
-                  declare
-                     Shifted : Index_Vectors.Vector;
-                  begin
-                     for Child of Item.Children loop
-                        Shifted.Append (Mapping (Child));
-                     end loop;
-                     if Item.Variant = List_Node then
-                        Into.Replace_Element
-                          (Position,
-                           Node'(Variant  => List_Node,
-                                 Depth    => Item.Depth,
-                                 Children => Shifted));
-                     else
-                        Into.Replace_Element
-                          (Position,
-                           Node'(Variant  => Formula_Node,
-                                 Depth    => Item.Depth,
-                                 Children => Shifted));
-                     end if;
-                  end;
+                  for Child of Item.Children loop
+                     Child := Mapping (Child);
+                  end loop;
                when Statement_Node =>
-                  Into.Replace_Element
-                    (Position,
-                     Node'(Variant        => Statement_Node,
-                           Depth          => Item.Depth,
-                           Subject_Node   => Mapping (Item.Subject_Node),
-                           Predicate_Node =>
-                             Mapping (Item.Predicate_Node),
-                           Object_Node    => Mapping (Item.Object_Node)));
+                  Item.Subject_Node := Mapping (Item.Subject_Node);
+                  Item.Predicate_Node := Mapping (Item.Predicate_Node);
+                  Item.Object_Node := Mapping (Item.Object_Node);
                when others =>
                   null;
             end case;
@@ -188,10 +156,12 @@ package body Flyology_N3.Model is
                       Name_Data => Unbounded.To_Unbounded_String (Name)));
    end Variable;
 
+   --  The builder's parts move into the term rather than being copied:
+   --  they were already copied once on the way in, and every part is an
+   --  allocation-bearing node.
    function Build
      (Variant : Node_Kind;
-      Parts   : Node_Vectors.Vector;
-      Roots   : Index_Vectors.Vector;
+      Items   : in out Builder;
       Depth   : Natural) return Term
    is
       Result : Term (Initialized => True);
@@ -199,16 +169,22 @@ package body Flyology_N3.Model is
       if Depth > Maximum_Depth then
          raise Invalid_Term with "term nesting exceeds the maximum depth";
       end if;
-      Result.Nodes := Parts;
+      Node_Vectors.Move (Target => Result.Nodes, Source => Items.Parts);
       if Variant = List_Node then
          Result.Nodes.Append
-           (Node'(Variant => List_Node, Depth => Depth, Children => Roots));
+           (Node'(Variant  => List_Node,
+                  Depth    => Depth,
+                  Children => Index_Vectors.Empty_Vector));
       else
          Result.Nodes.Append
            (Node'(Variant  => Formula_Node,
                   Depth    => Depth,
-                  Children => Roots));
+                  Children => Index_Vectors.Empty_Vector));
       end if;
+      Index_Vectors.Move
+        (Target => Result.Nodes (Result.Nodes.Last_Index).Children,
+         Source => Items.Roots);
+      Items.Depth := 0;
       return Result;
    end Build;
 
@@ -217,7 +193,7 @@ package body Flyology_N3.Model is
    begin
       Splice (Into.Parts, Value.Nodes, Where);
       Into.Roots.Append (Where);
-      Into.Depth := Natural'Max (Into.Depth, Root (Value).Depth);
+      Into.Depth := Natural'Max (Into.Depth, Root_Depth (Value.Nodes));
    end Append;
 
    procedure Append (Into : in out Builder; Value : Statement) is
@@ -225,17 +201,40 @@ package body Flyology_N3.Model is
    begin
       Splice (Into.Parts, Value.Nodes, Where);
       Into.Roots.Append (Where);
-      Into.Depth := Natural'Max (Into.Depth, Root (Value).Depth);
+      Into.Depth := Natural'Max (Into.Depth, Root_Depth (Value.Nodes));
+   end Append;
+
+   procedure Append
+     (Into : in out Builder; Subject, Predicate, Object : Term)
+   is
+      S, P, O : Positive;
+      Depth   : constant Natural :=
+        Natural'Max
+          (Root_Depth (Subject.Nodes),
+           Natural'Max
+             (Root_Depth (Predicate.Nodes), Root_Depth (Object.Nodes)));
+   begin
+      Splice (Into.Parts, Subject.Nodes, S);
+      Splice (Into.Parts, Predicate.Nodes, P);
+      Splice (Into.Parts, Object.Nodes, O);
+      Into.Parts.Append
+        (Node'(Variant        => Statement_Node,
+               Depth          => Depth,
+               Subject_Node   => S,
+               Predicate_Node => P,
+               Object_Node    => O));
+      Into.Roots.Append (Natural (Into.Parts.Length));
+      Into.Depth := Natural'Max (Into.Depth, Depth);
    end Append;
 
    function Count (Value : Builder) return Natural
    is (Natural (Value.Roots.Length));
 
-   function List (Items : Builder) return Term
-   is (Build (List_Node, Items.Parts, Items.Roots, Items.Depth + 1));
+   function List (Items : in out Builder) return Term
+   is (Build (List_Node, Items, Items.Depth + 1));
 
-   function Formula (Items : Builder) return Term
-   is (Build (Formula_Node, Items.Parts, Items.Roots, Items.Depth + 1));
+   function Formula (Items : in out Builder) return Term
+   is (Build (Formula_Node, Items, Items.Depth + 1));
 
    function Empty_Formula return Term is
       Nothing : Builder;
@@ -245,21 +244,24 @@ package body Flyology_N3.Model is
 
    function Create (Subject, Predicate, Object : Term) return Statement is
       Result : Statement (Initialized => True);
-      Parts  : Node_Vectors.Vector;
       S, P, O : Positive;
-      Depth  : Natural := 0;
    begin
-      Splice (Parts, Subject.Nodes, S);
-      Splice (Parts, Predicate.Nodes, P);
-      Splice (Parts, Object.Nodes, O);
-      Depth := Natural'Max
-        (Root (Subject).Depth,
-         Natural'Max (Root (Predicate).Depth, Root (Object).Depth));
-
-      Result.Nodes := Parts;
+      --  Spliced straight into the result: a staging vector would copy
+      --  every node a second time on its way out. The size is known here,
+      --  so the vector is grown once rather than by doubling.
+      Result.Nodes.Reserve_Capacity
+        (Subject.Nodes.Length + Predicate.Nodes.Length
+         + Object.Nodes.Length + 1);
+      Splice (Result.Nodes, Subject.Nodes, S);
+      Splice (Result.Nodes, Predicate.Nodes, P);
+      Splice (Result.Nodes, Object.Nodes, O);
       Result.Nodes.Append
         (Node'(Variant        => Statement_Node,
-               Depth          => Depth,
+               Depth          => Natural'Max
+                 (Root_Depth (Subject.Nodes),
+                  Natural'Max
+                    (Root_Depth (Predicate.Nodes),
+                     Root_Depth (Object.Nodes))),
                Subject_Node   => S,
                Predicate_Node => P,
                Object_Node    => O));
@@ -272,7 +274,7 @@ package body Flyology_N3.Model is
 
    function Kind (Value : Term) return Term_Kind is
    begin
-      case Root (Value).Variant is
+      case Root_Variant (Value.Nodes) is
          when RDF_Node       => return RDF_Kind;
          when Variable_Node  => return Variable_Kind;
          when List_Node      => return List_Kind;
@@ -285,25 +287,31 @@ package body Flyology_N3.Model is
    function RDF_Value (Value : Term) return RDF.Terms.Term is
    begin
       Require (Value, RDF_Node);
-      return RDF_Holders.Element (Root (Value).RDF_Data);
+      return RDF_Holders.Element
+        (Value.Nodes (Value.Nodes.Last_Index).RDF_Data);
    end RDF_Value;
 
    function Name (Value : Term) return String is
    begin
       Require (Value, Variable_Node);
-      return Unbounded.To_String (Root (Value).Name_Data);
+      return Unbounded.To_String
+        (Value.Nodes (Value.Nodes.Last_Index).Name_Data);
    end Name;
 
    function Length (Value : Term) return Natural is
    begin
       Require (Value, List_Node);
-      return Natural (Root (Value).Children.Length);
+      return Natural
+        (Value.Nodes (Value.Nodes.Last_Index).Children.Length);
    end Length;
 
    function Child (Value : Term; Index : Positive) return Term is
       Result : Term (Initialized => True);
    begin
-      Extract (Value.Nodes, Root (Value).Children (Index), Result.Nodes);
+      Extract
+        (Value.Nodes,
+         Value.Nodes (Value.Nodes.Last_Index).Children (Index),
+         Result.Nodes);
       return Result;
    end Child;
 
@@ -316,14 +324,18 @@ package body Flyology_N3.Model is
    function Statement_Count (Value : Term) return Natural is
    begin
       Require (Value, Formula_Node);
-      return Natural (Root (Value).Children.Length);
+      return Natural
+        (Value.Nodes (Value.Nodes.Last_Index).Children.Length);
    end Statement_Count;
 
    function Statement_At (Value : Term; Index : Positive) return Statement is
       Result : Statement (Initialized => True);
    begin
       Require (Value, Formula_Node);
-      Extract (Value.Nodes, Root (Value).Children (Index), Result.Nodes);
+      Extract
+        (Value.Nodes,
+         Value.Nodes (Value.Nodes.Last_Index).Children (Index),
+         Result.Nodes);
       return Result;
    end Statement_At;
 
@@ -335,13 +347,13 @@ package body Flyology_N3.Model is
    end Part;
 
    function Subject (Value : Statement) return Term
-   is (Part (Value, Root (Value).Subject_Node));
+   is (Part (Value, Value.Nodes (Value.Nodes.Last_Index).Subject_Node));
 
    function Predicate (Value : Statement) return Term
-   is (Part (Value, Root (Value).Predicate_Node));
+   is (Part (Value, Value.Nodes (Value.Nodes.Last_Index).Predicate_Node));
 
    function Object (Value : Statement) return Term
-   is (Part (Value, Root (Value).Object_Node));
+   is (Part (Value, Value.Nodes (Value.Nodes.Last_Index).Object_Node));
 
    ----------------------------------------------------------------------
    --  Equality

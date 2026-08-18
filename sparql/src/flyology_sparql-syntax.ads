@@ -1,4 +1,3 @@
-private with Ada.Containers.Indefinite_Vectors;
 private with Ada.Containers.Vectors;
 private with Ada.Strings.Unbounded;
 
@@ -215,8 +214,25 @@ package Flyology_SPARQL.Syntax is
    procedure Set_Limit (Into : in out Builder; Value : Integer);
    procedure Set_Offset (Into : in out Builder; Value : Integer);
 
-   --  Finish, producing the query.
-   function To_Query (Into : Builder) return Query;
+   --  Read one node of the tree still being built. The parser asks
+   --  questions of nodes it has just made, and producing a whole Query to
+   --  answer one would copy the tree each time it was asked.
+   function Kind (Into : Builder; Node : Node_Reference) return Node_Kind;
+   function Text (Into : Builder; Node : Node_Reference) return String;
+   function Child_Count
+     (Into : Builder; Node : Node_Reference) return Natural;
+   function Child
+     (Into  : Builder;
+      Node  : Node_Reference;
+      Index : Positive) return Node_Reference;
+
+   --  Return the WHERE clause recorded so far, or No_Node.
+   function Where_Clause (Into : Builder) return Node_Reference;
+
+   --  Finish, producing the query. The nodes move into it rather than
+   --  being copied, which is why the builder is left empty rather than
+   --  reusable.
+   function To_Query (Into : in out Builder) return Query;
 
 private
 
@@ -232,7 +248,10 @@ private
       Children : Reference_Vectors.Vector;
    end record;
 
-   package Node_Vectors is new Ada.Containers.Indefinite_Vectors
+   --  The node type is definite, so the nodes can live in the vector
+   --  itself; a vector that kept each one behind its own allocation would
+   --  pay that allocation on every append.
+   package Node_Vectors is new Ada.Containers.Vectors
      (Index_Type => Positive, Element_Type => Node);
 
    type Prefix_Binding is record
@@ -240,7 +259,7 @@ private
       Namespace : Unbounded.Unbounded_String;
    end record;
 
-   package Binding_Vectors is new Ada.Containers.Indefinite_Vectors
+   package Binding_Vectors is new Ada.Containers.Vectors
      (Index_Type => Positive, Element_Type => Prefix_Binding);
 
    type Query (Initialized : Boolean) is record

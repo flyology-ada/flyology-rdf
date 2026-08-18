@@ -1,5 +1,4 @@
 private with Ada.Containers.Indefinite_Holders;
-private with Ada.Containers.Indefinite_Vectors;
 private with Ada.Containers.Vectors;
 private with Ada.Strings.Unbounded;
 
@@ -56,6 +55,16 @@ package Flyology_N3.Model is
    --  @param Value Statement to add
    procedure Append (Into : in out Builder; Value : Statement);
 
+   --  Add a formula statement assembled from its parts where it lands.
+   --  Building the statement first and then adding it would copy every
+   --  node of all three parts a second time.
+   --  @param Into Builder to extend
+   --  @param Subject Subject term
+   --  @param Predicate Predicate term
+   --  @param Object Object term
+   procedure Append
+     (Into : in out Builder; Subject, Predicate, Object : Term);
+
    --  Report how many parts have been added.
    --  @param Value Builder to measure
    --  @return Part count
@@ -77,17 +86,21 @@ package Flyology_N3.Model is
    --  @exception Invalid_Term Name is empty
    function Variable (Name : String) return Term;
 
-   --  Build a list from accumulated elements.
-   --  @param Items Builder holding the elements, in order
+   --  Build a list from accumulated elements. The parts move into the
+   --  term rather than being copied, which is why the builder is left
+   --  empty rather than reusable.
+   --  @param Items Builder holding the elements, in order; emptied
    --  @return The corresponding N3 term
    --  @exception Invalid_Term The result would exceed Maximum_Depth
-   function List (Items : Builder) return Term;
+   function List (Items : in out Builder) return Term;
 
-   --  Build a formula from accumulated statements.
-   --  @param Items Builder holding the statements, in order
+   --  Build a formula from accumulated statements. The parts move into
+   --  the term rather than being copied, which is why the builder is left
+   --  empty rather than reusable.
+   --  @param Items Builder holding the statements, in order; emptied
    --  @return The corresponding N3 term
    --  @exception Invalid_Term The result would exceed Maximum_Depth
-   function Formula (Items : Builder) return Term;
+   function Formula (Items : in out Builder) return Term;
 
    --  The empty formula, which N3 writes as {}.
    --  @return A formula holding no statements
@@ -190,7 +203,11 @@ private
       end case;
    end record;
 
-   package Node_Vectors is new Ada.Containers.Indefinite_Vectors
+   --  A node's discriminant is defaulted, so the type is definite and the
+   --  nodes can live in the vector itself; a vector that kept each one
+   --  behind its own allocation would pay that allocation again on every
+   --  copy of every node.
+   package Node_Vectors is new Ada.Containers.Vectors
      (Index_Type => Positive, Element_Type => Node);
 
    type Term (Initialized : Boolean) is record

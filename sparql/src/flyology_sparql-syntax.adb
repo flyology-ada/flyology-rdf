@@ -1,8 +1,5 @@
 package body Flyology_SPARQL.Syntax is
 
-   function Item (Value : Query; Node : Node_Reference) return Syntax.Node
-   is (Value.Nodes (Positive (Node)));
-
    function Form (Value : Query) return Query_Form is (Value.Form_Value);
 
    function Base (Value : Query) return String
@@ -20,23 +17,27 @@ package body Flyology_SPARQL.Syntax is
    function Where_Clause (Value : Query) return Node_Reference
    is (Value.Where_Value);
 
+   --  Each of these reads one component through a reference into the
+   --  vector. Materializing the node to answer would copy its texts and
+   --  its child list every time anything was asked about it.
+
    function Kind (Value : Query; Node : Node_Reference) return Node_Kind
-   is (Item (Value, Node).Variant);
+   is (Value.Nodes (Positive (Node)).Variant);
 
    function Text (Value : Query; Node : Node_Reference) return String
-   is (Unbounded.To_String (Item (Value, Node).Text));
+   is (Unbounded.To_String (Value.Nodes (Positive (Node)).Text));
 
    function Detail (Value : Query; Node : Node_Reference) return String
-   is (Unbounded.To_String (Item (Value, Node).Detail));
+   is (Unbounded.To_String (Value.Nodes (Positive (Node)).Detail));
 
    function Child_Count (Value : Query; Node : Node_Reference) return Natural
-   is (Natural (Item (Value, Node).Children.Length));
+   is (Natural (Value.Nodes (Positive (Node)).Children.Length));
 
    function Child
      (Value : Query;
       Node  : Node_Reference;
       Index : Positive) return Node_Reference
-   is (Item (Value, Node).Children (Index));
+   is (Value.Nodes (Positive (Node)).Children (Index));
 
    function Duplicates (Value : Query) return Duplicates_Kind
    is (Value.Duplicates_Value);
@@ -94,12 +95,11 @@ package body Flyology_SPARQL.Syntax is
    end Add_Node;
 
    procedure Add_Child
-     (Into : in out Builder; Parent, Item : Node_Reference)
-   is
-      Target : Node := Into.Draft.Nodes (Positive (Parent));
+     (Into : in out Builder; Parent, Item : Node_Reference) is
    begin
-      Target.Children.Append (Item);
-      Into.Draft.Nodes.Replace_Element (Positive (Parent), Target);
+      --  Extended in place: taking the node out and putting it back would
+      --  copy its texts and its child list for every child attached.
+      Into.Draft.Nodes (Positive (Parent)).Children.Append (Item);
    end Add_Child;
 
    procedure Add_Prefix (Into : in out Builder; Name, Namespace : String) is
@@ -182,6 +182,48 @@ package body Flyology_SPARQL.Syntax is
       Into.Draft.Offset_Value := Value;
    end Set_Offset;
 
-   function To_Query (Into : Builder) return Query is (Into.Draft);
+   function Kind (Into : Builder; Node : Node_Reference) return Node_Kind
+   is (Into.Draft.Nodes (Positive (Node)).Variant);
+
+   function Text (Into : Builder; Node : Node_Reference) return String
+   is (Unbounded.To_String (Into.Draft.Nodes (Positive (Node)).Text));
+
+   function Child_Count
+     (Into : Builder; Node : Node_Reference) return Natural
+   is (Natural (Into.Draft.Nodes (Positive (Node)).Children.Length));
+
+   function Child
+     (Into  : Builder;
+      Node  : Node_Reference;
+      Index : Positive) return Node_Reference
+   is (Into.Draft.Nodes (Positive (Node)).Children (Index));
+
+   function Where_Clause (Into : Builder) return Node_Reference
+   is (Into.Draft.Where_Value);
+
+   function To_Query (Into : in out Builder) return Query is
+   begin
+      return Result : Query (Initialized => True) do
+         Node_Vectors.Move
+           (Target => Result.Nodes, Source => Into.Draft.Nodes);
+         Binding_Vectors.Move
+           (Target => Result.Bindings, Source => Into.Draft.Bindings);
+         Result.Form_Value       := Into.Draft.Form_Value;
+         Result.Base_Value       := Into.Draft.Base_Value;
+         Result.Where_Value      := Into.Draft.Where_Value;
+         Result.Projection_Value := Into.Draft.Projection_Value;
+         Result.Group_Value      := Into.Draft.Group_Value;
+         Result.Having_Value     := Into.Draft.Having_Value;
+         Result.Order_Value      := Into.Draft.Order_Value;
+         Result.Template_Value   := Into.Draft.Template_Value;
+         Result.Describe_Value   := Into.Draft.Describe_Value;
+         Result.Dataset_Value    := Into.Draft.Dataset_Value;
+         Result.Version_Value    := Into.Draft.Version_Value;
+         Result.Duplicates_Value := Into.Draft.Duplicates_Value;
+         Result.Selects_All_Flag := Into.Draft.Selects_All_Flag;
+         Result.Limit_Value      := Into.Draft.Limit_Value;
+         Result.Offset_Value     := Into.Draft.Offset_Value;
+      end return;
+   end To_Query;
 
 end Flyology_SPARQL.Syntax;

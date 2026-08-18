@@ -1,3 +1,4 @@
+with Ada.Containers.Indefinite_Holders;
 with Ada.Containers.Indefinite_Ordered_Maps;
 with Ada.Containers.Indefinite_Ordered_Sets;
 
@@ -21,6 +22,9 @@ package body Flyology_N3.Parsers is
 
    package Label_Sets is new Ada.Containers.Indefinite_Ordered_Sets
      (Element_Type => String);
+
+   package IRI_Holders is new Ada.Containers.Indefinite_Holders
+     (Element_Type => IRIs.IRI, "=" => IRIs."=");
 
    Log_Implies : constant String :=
      "http://www.w3.org/2000/10/swap/log#implies";
@@ -49,8 +53,22 @@ package body Flyology_N3.Parsers is
       Next   : Positive := 1;
 
       Prefixes : Prefix_Maps.Map;
-      Base     : Unbounded.Unbounded_String :=
-        Unbounded.To_Unbounded_String (Base_IRI);
+
+      --  The base is kept parsed. Every prefixed name and IRI reference
+      --  resolves against it, and re-reading it from its text would parse
+      --  it once per name in the document.
+      Base : IRI_Holders.Holder;
+
+      --  The IRIs the grammar itself names, parsed once per document
+      --  rather than once per keyword that stands for them.
+      Implies_IRI : constant IRIs.IRI := IRIs.From_UTF_8 (Log_Implies);
+      Same_As_IRI : constant IRIs.IRI := IRIs.From_UTF_8 (OWL_Same_As);
+      Type_IRI    : constant IRIs.IRI := IRIs.From_UTF_8 (RDF_Type);
+      String_IRI  : constant IRIs.IRI := IRIs.From_UTF_8 (XSD_String);
+      Integer_IRI : constant IRIs.IRI := IRIs.From_UTF_8 (XSD_Integer);
+      Decimal_IRI : constant IRIs.IRI := IRIs.From_UTF_8 (XSD_Decimal);
+      Double_IRI  : constant IRIs.IRI := IRIs.From_UTF_8 (XSD_Double);
+      Boolean_IRI : constant IRIs.IRI := IRIs.From_UTF_8 (XSD_Boolean);
 
       --  Labels the document wrote itself, so a generated one never
       --  collides with them.
@@ -158,14 +176,13 @@ package body Flyology_N3.Parsers is
 
       function Resolve (Reference : String) return IRIs.IRI is
       begin
-         if Unbounded.Length (Base) = 0 then
+         if Base.Is_Empty then
             if not IRIs.Is_Valid (Reference) then
                Fail ("relative IRI with no base");
             end if;
             return IRIs.From_UTF_8 (Reference);
          end if;
-         return IRIs.Resolve
-           (IRIs.From_UTF_8 (Unbounded.To_String (Base)), Reference);
+         return IRIs.Resolve (Base.Constant_Reference, Reference);
       exception
          when IRIs.Invalid_IRI | IRIs.Invalid_UTF_8 =>
             Fail ("invalid IRI");
@@ -186,9 +203,6 @@ package body Flyology_N3.Parsers is
          end if;
          return Resolve (Prefixes.Element (Key) & Lexers.Text (Value));
       end Expand;
-
-      function Named (Text : String) return Model.Term
-      is (Model.IRI_Term (IRIs.From_UTF_8 (Text)));
 
       --  Statements produced while reading a term -- by a path, a property
       --  list, or a list -- belong to the formula being built, not to the
@@ -214,23 +228,19 @@ package body Flyology_N3.Parsers is
             when Lexers.Integer_Token =>
                Advance;
                return Model.From_RDF
-                 (Terms.Literal (Lexers.Text (Value),
-                                 IRIs.From_UTF_8 (XSD_Integer)));
+                 (Terms.Literal (Lexers.Text (Value), Integer_IRI));
             when Lexers.Decimal_Token =>
                Advance;
                return Model.From_RDF
-                 (Terms.Literal (Lexers.Text (Value),
-                                 IRIs.From_UTF_8 (XSD_Decimal)));
+                 (Terms.Literal (Lexers.Text (Value), Decimal_IRI));
             when Lexers.Double_Token =>
                Advance;
                return Model.From_RDF
-                 (Terms.Literal (Lexers.Text (Value),
-                                 IRIs.From_UTF_8 (XSD_Double)));
+                 (Terms.Literal (Lexers.Text (Value), Double_IRI));
             when Lexers.Boolean_Token =>
                Advance;
                return Model.From_RDF
-                 (Terms.Literal (Lexers.Text (Value),
-                                 IRIs.From_UTF_8 (XSD_Boolean)));
+                 (Terms.Literal (Lexers.Text (Value), Boolean_IRI));
             when Lexers.String_Token =>
                Advance;
                if Peek = Lexers.Language_Token then
@@ -276,8 +286,7 @@ package body Flyology_N3.Parsers is
                   end case;
                end if;
                return Model.From_RDF
-                 (Terms.Literal (Lexers.Text (Value),
-                                 IRIs.From_UTF_8 (XSD_String)));
+                 (Terms.Literal (Lexers.Text (Value), String_IRI));
             when others =>
                Fail ("expected a literal");
          end case;
@@ -405,8 +414,7 @@ package body Flyology_N3.Parsers is
                   Step   : constant Model.Term := Parse_Path_Item (Into);
                   Object : constant Model.Term := Fresh_Blank;
                begin
-                  Model.Append
-                    (Into.Items, Model.Create (Result, Step, Object));
+                  Model.Append (Into.Items, Result, Step, Object);
                   Result := Object;
                end;
             elsif Peek = Lexers.Backward_Path_Token then
@@ -415,8 +423,7 @@ package body Flyology_N3.Parsers is
                   Step    : constant Model.Term := Parse_Path_Item (Into);
                   Subject : constant Model.Term := Fresh_Blank;
                begin
-                  Model.Append
-                    (Into.Items, Model.Create (Subject, Step, Result));
+                  Model.Append (Into.Items, Subject, Step, Result);
                   Result := Subject;
                end;
             else
@@ -469,19 +476,19 @@ package body Flyology_N3.Parsers is
          case Peek is
             when Lexers.A_Token =>
                Advance;
-               return Named (RDF_Type);
+               return Model.IRI_Term (Type_IRI);
             when Lexers.Implies_Token =>
                Advance;
-               return Named (Log_Implies);
+               return Model.IRI_Term (Implies_IRI);
             when Lexers.Implied_By_Token =>
                --  "A <= B" states the same implication as "B => A"; the
                --  arrow names which side is which, not a second predicate.
                Advance;
                Reversed := True;
-               return Named (Log_Implies);
+               return Model.IRI_Term (Implies_IRI);
             when Lexers.Equals_Token =>
                Advance;
-               return Named (OWL_Same_As);
+               return Model.IRI_Term (Same_As_IRI);
             when others =>
                return Parse_Expression (Into);
          end case;
@@ -501,13 +508,9 @@ package body Flyology_N3.Parsers is
                      Object : constant Model.Term := Parse_Expression (Into);
                   begin
                      if Reversed then
-                        Model.Append
-                          (Into.Items,
-                           Model.Create (Object, Verb, Subject));
+                        Model.Append (Into.Items, Object, Verb, Subject);
                      else
-                        Model.Append
-                          (Into.Items,
-                           Model.Create (Subject, Verb, Object));
+                        Model.Append (Into.Items, Subject, Verb, Object);
                      end if;
                   end;
                   exit when Peek /= Lexers.Comma_Token;
@@ -583,8 +586,7 @@ package body Flyology_N3.Parsers is
                   if Peek /= Lexers.IRI_Reference_Token then
                      Fail ("expected a base IRI");
                   end if;
-                  Base := Unbounded.To_Unbounded_String
-                    (IRIs.To_UTF_8 (Resolve (Lexers.Text (Current))));
+                  Base.Replace_Element (Resolve (Lexers.Text (Current)));
                   Advance;
                   if Terminated then
                      Expect (Lexers.Dot_Token, "a terminator");
@@ -653,8 +655,11 @@ package body Flyology_N3.Parsers is
       Document_Sink : Statement_Sink;
 
    begin
-      if Base_IRI /= "" and then not IRIs.Is_Valid (Base_IRI) then
-         raise Parse_Error with "base IRI is not absolute";
+      if Base_IRI /= "" then
+         if not IRIs.Is_Valid (Base_IRI) then
+            raise Parse_Error with "base IRI is not absolute";
+         end if;
+         Base.Replace_Element (IRIs.From_UTF_8 (Base_IRI));
       end if;
 
       while not At_End loop

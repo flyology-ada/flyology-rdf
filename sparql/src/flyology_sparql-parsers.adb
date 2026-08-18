@@ -1,5 +1,7 @@
 with Ada.Characters.Handling;
+with Ada.Containers.Indefinite_Ordered_Maps;
 with Ada.Containers.Indefinite_Ordered_Sets;
+with Ada.Containers.Vectors;
 
 
 package body Flyology_SPARQL.Parsers is
@@ -15,6 +17,12 @@ package body Flyology_SPARQL.Parsers is
 
    package String_Sets is new Ada.Containers.Indefinite_Ordered_Sets
      (Element_Type => String);
+
+   package Name_Id_Maps is new Ada.Containers.Indefinite_Ordered_Maps
+     (Key_Type => String, Element_Type => Positive);
+
+   package Flag_Vectors is new Ada.Containers.Vectors
+     (Index_Type => Positive, Element_Type => Boolean);
 
    function Upper (Value : String) return String
    is (Ada.Characters.Handling.To_Upper (Value));
@@ -270,7 +278,7 @@ package body Flyology_SPARQL.Parsers is
                         --  so it is not a literal and not another triple
                         --  term, and its predicate is an IRI.
                         if Position < 3
-                          and then Syntax.Kind (Syntax.To_Query (Tree), Part)
+                          and then Syntax.Kind (Tree, Part)
                                    in Syntax.Literal_Node
                                     | Syntax.Triple_Term_Node
                         then
@@ -392,14 +400,13 @@ package body Flyology_SPARQL.Parsers is
          declare
             Term : constant Syntax.Node_Reference := Parse_Term;
          begin
-            if Syntax.Kind (Syntax.To_Query (Tree), Term)
-               = Syntax.Blank_Node
+            if Syntax.Kind (Tree, Term) = Syntax.Blank_Node
             then
                Fail ("a blank node has no meaning in an expression");
             end if;
 
             if Peek = Lexers.Open_Paren_Token
-              and then Syntax.Kind (Syntax.To_Query (Tree), Term)
+              and then Syntax.Kind (Tree, Term)
                        in Syntax.IRI_Node | Syntax.Prefixed_Node
             then
                --  An IRI followed by an argument list is a function call.
@@ -661,7 +668,7 @@ package body Flyology_SPARQL.Parsers is
             declare
                Result : constant Syntax.Node_Reference := Parse_Term;
             begin
-               if Syntax.Kind (Syntax.To_Query (Tree), Result)
+               if Syntax.Kind (Tree, Result)
                   in Syntax.Literal_Node | Syntax.Blank_Node
                then
                   Fail ("a predicate is an IRI, a variable or a path");
@@ -739,7 +746,7 @@ package body Flyology_SPARQL.Parsers is
       --  annotation may not attach to one, and a quoted triple may not
       --  carry one.
       function Is_Path (Node : Syntax.Node_Reference) return Boolean
-      is (Syntax.Kind (Syntax.To_Query (Tree), Node)
+      is (Syntax.Kind (Tree, Node)
           in Syntax.Unary_Node | Syntax.Arithmetic_Node);
 
       procedure Parse_Predicate_Objects
@@ -948,8 +955,7 @@ package body Flyology_SPARQL.Parsers is
                if Peek = Lexers.Open_Annotation_Token then
                   Advance;
                   Parse_Predicate_Objects
-                    (Into, Syntax.Child
-                             (Syntax.To_Query (Tree), Marker, 2));
+                    (Into, Syntax.Child (Tree, Marker, 2));
                   Expect (Lexers.Close_Annotation_Token,
                           "an annotation terminator");
                end if;
@@ -1016,14 +1022,12 @@ package body Flyology_SPARQL.Parsers is
                --  pattern. Counting what reading it contributed answers
                --  all six cases at once.
                Before  : constant Natural :=
-                 Syntax.Child_Count (Syntax.To_Query (Tree), Into);
+                 Syntax.Child_Count (Tree, Into);
                Subject : constant Syntax.Node_Reference :=
                  Parse_Pattern_Term (Into);
             begin
                if Peek in Lexers.Dot_Token | Lexers.Close_Brace_Token then
-                  if Syntax.Child_Count (Syntax.To_Query (Tree), Into)
-                     = Before
-                  then
+                  if Syntax.Child_Count (Tree, Into) = Before then
                      Fail ("this term states nothing on its own");
                   end if;
                else
@@ -1265,15 +1269,13 @@ package body Flyology_SPARQL.Parsers is
          end if;
 
          declare
-            Width : constant Natural :=
-              Syntax.Child_Count (Syntax.To_Query (Tree), Vars);
+            Width : constant Natural := Syntax.Child_Count (Tree, Vars);
             Seen  : String_Sets.Set;
-            Built : constant Syntax.Query := Syntax.To_Query (Tree);
          begin
             for Index in 1 .. Width loop
                declare
                   Name : constant String :=
-                    Syntax.Text (Built, Syntax.Child (Built, Vars, Index));
+                    Syntax.Text (Tree, Syntax.Child (Tree, Vars, Index));
                begin
                   if Seen.Contains (Name) then
                      Fail ("?" & Name & " is bound twice by one VALUES");
@@ -1284,9 +1286,9 @@ package body Flyology_SPARQL.Parsers is
 
             --  Each row supplies one value per variable; a row of another
             --  length does not describe a binding.
-            for Index in 2 .. Syntax.Child_Count (Built, Item) loop
+            for Index in 2 .. Syntax.Child_Count (Tree, Item) loop
                if Syntax.Child_Count
-                    (Built, Syntax.Child (Built, Item, Index)) /= Width
+                    (Tree, Syntax.Child (Tree, Item, Index)) /= Width
                then
                   Fail ("a VALUES row does not match the variable list");
                end if;
@@ -1441,8 +1443,7 @@ package body Flyology_SPARQL.Parsers is
                end;
 
             elsif Peek = Lexers.Dot_Token then
-               if Syntax.Child_Count (Syntax.To_Query (Tree), Result) = 0
-               then
+               if Syntax.Child_Count (Tree, Result) = 0 then
                   Fail ("a terminator with nothing before it");
                end if;
                Advance;
@@ -1635,7 +1636,7 @@ package body Flyology_SPARQL.Parsers is
             Advance;
             declare
                Where : constant Syntax.Node_Reference :=
-                 Syntax.Where_Clause (Syntax.To_Query (Tree));
+                 Syntax.Where_Clause (Tree);
                Data  : constant Syntax.Node_Reference := Parse_Values;
             begin
                if Where /= Syntax.No_Node then
@@ -1749,10 +1750,42 @@ package body Flyology_SPARQL.Parsers is
       --  variable already in scope, a blank node label shared between two
       --  pattern groups. A parser that only implements the grammar accepts
       --  all of them, so these are checked over the finished tree.
-      procedure Validate is
-         Query_Value : constant Syntax.Query := Syntax.To_Query (Tree);
-         Bound       : String_Sets.Set;
-         Labels      : String_Sets.Set;
+      procedure Validate (Query_Value : Syntax.Query) is
+         --  The scope walk saves and restores the set of bound variables
+         --  around every nested group. Held as a set of strings that is
+         --  an allocation per name per group; interned, a scope is a row
+         --  of flags that copies in one piece.
+         Names  : Name_Id_Maps.Map;
+         Bound  : Flag_Vectors.Vector;
+         Labels : String_Sets.Set;
+
+         function Id_Of (Name : String) return Positive is
+            Position : constant Name_Id_Maps.Cursor := Names.Find (Name);
+         begin
+            if Name_Id_Maps.Has_Element (Position) then
+               return Name_Id_Maps.Element (Position);
+            end if;
+            return Id : constant Positive := Natural (Names.Length) + 1 do
+               Names.Insert (Name, Id);
+            end return;
+         end Id_Of;
+
+         function In_Scope (Name : String) return Boolean is
+            Position : constant Name_Id_Maps.Cursor := Names.Find (Name);
+         begin
+            return Name_Id_Maps.Has_Element (Position)
+              and then Name_Id_Maps.Element (Position) <= Bound.Last_Index
+              and then Bound (Name_Id_Maps.Element (Position));
+         end In_Scope;
+
+         procedure Mark_Bound (Name : String) is
+            Id : constant Positive := Id_Of (Name);
+         begin
+            while Bound.Last_Index < Id loop
+               Bound.Append (False);
+            end loop;
+            Bound (Id) := True;
+         end Mark_Bound;
 
          --  Each group gets a serial of its own, and gets it back when a
          --  nested group closes: a counter that only ever climbs would
@@ -1809,7 +1842,7 @@ package body Flyology_SPARQL.Parsers is
                return;
             end if;
             if Syntax.Kind (Query_Value, Node) = Syntax.Variable_Node then
-               Bound.Include (Syntax.Text (Query_Value, Node));
+               Mark_Bound (Syntax.Text (Query_Value, Node));
             end if;
             for Index in 1 .. Syntax.Child_Count (Query_Value, Node) loop
                Collect_Variables (Syntax.Child (Query_Value, Node, Index));
@@ -1869,8 +1902,7 @@ package body Flyology_SPARQL.Parsers is
                   begin
                      if Syntax.Kind (Query_Value, Target)
                         = Syntax.Variable_Node
-                       and then Bound.Contains
-                                  (Syntax.Text (Query_Value, Target))
+                       and then In_Scope (Syntax.Text (Query_Value, Target))
                      then
                         Complain
                           ("BIND assigns to ?"
@@ -1891,10 +1923,12 @@ package body Flyology_SPARQL.Parsers is
                   --  enclosing scope once it closes, so a BIND *after* it
                   --  may not reuse those names.
                   declare
-                     Enclosing : constant String_Sets.Set := Bound;
+                     Enclosing : constant Flag_Vectors.Vector := Bound;
                      Outer     : constant Natural := Group_Serial;
                   begin
-                     Bound.Clear;
+                     for Id in 1 .. Bound.Last_Index loop
+                        Bound (Id) := False;
+                     end loop;
                      Next_Serial := Next_Serial + 1;
                      Group_Serial := Next_Serial;
                      for Index in 1 .. Syntax.Child_Count (Query_Value, Node)
@@ -1918,7 +1952,11 @@ package body Flyology_SPARQL.Parsers is
                         end;
                      end loop;
                      Group_Serial := Outer;
-                     Bound.Union (Enclosing);
+                     for Id in 1 .. Enclosing.Last_Index loop
+                        if Enclosing (Id) then
+                           Bound (Id) := True;
+                        end if;
+                     end loop;
                   end;
 
                when Syntax.Subquery_Node =>
@@ -1943,7 +1981,7 @@ package body Flyology_SPARQL.Parsers is
                                      (Syntax.Child (Query_Value, Items, Slot));
                               begin
                                  if Name /= "" then
-                                    Bound.Include (Name);
+                                    Mark_Bound (Name);
                                  end if;
                               end;
                            end loop;
@@ -2148,7 +2186,7 @@ package body Flyology_SPARQL.Parsers is
                      then
                         if (if Grouping /= Syntax.No_Node
                             then Keys.Contains (Name)
-                            else Bound.Contains (Name))
+                            else In_Scope (Name))
                         then
                            Complain
                              ("?" & Name & " is already in scope and so"
@@ -2198,13 +2236,12 @@ package body Flyology_SPARQL.Parsers is
             Advance;
             declare
                Where : constant Syntax.Node_Reference := Parse_Group;
-               Built : constant Syntax.Query := Syntax.To_Query (Tree);
             begin
                --  The short form serves as its own template, so its
                --  pattern has to be something a template could contain:
                --  triples and nothing else.
-               for Index in 1 .. Syntax.Child_Count (Built, Where) loop
-                  if Syntax.Kind (Built, Syntax.Child (Built, Where, Index))
+               for Index in 1 .. Syntax.Child_Count (Tree, Where) loop
+                  if Syntax.Kind (Tree, Syntax.Child (Tree, Where, Index))
                      not in Syntax.Triple_Node | Syntax.Reified_Node
                           | Syntax.Triple_Term_Node
                   then
@@ -2218,8 +2255,12 @@ package body Flyology_SPARQL.Parsers is
             if not At_End then
                Fail ("unexpected input after the query");
             end if;
-            Validate;
-            return Syntax.To_Query (Tree);
+            declare
+               Result : constant Syntax.Query := Syntax.To_Query (Tree);
+            begin
+               Validate (Result);
+               return Result;
+            end;
          end if;
 
          declare
@@ -2282,8 +2323,12 @@ package body Flyology_SPARQL.Parsers is
          Fail ("unexpected input after the query");
       end if;
 
-      Validate;
-      return Syntax.To_Query (Tree);
+      declare
+         Result : constant Syntax.Query := Syntax.To_Query (Tree);
+      begin
+         Validate (Result);
+         return Result;
+      end;
    end Parse_Tokens;
 
    ---------------------------------------------------------------------
