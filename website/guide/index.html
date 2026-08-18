@@ -200,10 +200,10 @@ end On_Diagnostic;</code></pre></figure>
             <p>The parser can hand control back during a long input. Pass a <a href="../api/ba45629a80ca48b4134c300c0a1fdfc1ae8441bc385aacfccc2927a8dae97448.html#6b2def48c523516cf19413f7174460042f3022de48286a24e055a11677e4ee30"><code>Work_Checkpoint</code></a> and the parser calls it every <a href="../api/ba45629a80ca48b4134c300c0a1fdfc1ae8441bc385aacfccc2927a8dae97448.html#8365cd9b6342a06a4c99cc9418b06fdcd7471d4d84307c58a84bbe4dfecbfe61"><code>Work_Checkpoint_Interval</code></a> units of work. A lightweight task yields inside that callback, so the library needs no knowledge of the scheduler.</p>
             <figure class="code-panel"><figcaption>what a parse cost</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Cost : constant RDF.Turtle_Parsers.Work_Statistics :=
   RDF.Turtle_Parsers.Work (Parser);
---  Bytes_Scanned, Tokens_Scanned, Statements_Parsed,
---  Checkpoint_Calls, Maximum_Pending_Bytes,
---  Maximum_Pending_Tokens</code></pre></figure>
-            <aside class="callout"><span class="callout-symbol" aria-hidden="true">i</span><p><a href="../api/ba45629a80ca48b4134c300c0a1fdfc1ae8441bc385aacfccc2927a8dae97448.html#922a46080644895d5092a9e3f6bdc3b76e6a885d029479e670fa4b63be6e6bfc"><code>Maximum_Pending_Bytes</code></a> reports how much the parser held: the high-water mark of the buffer, which for well-formed input is one partial token.</p></aside>
+--  Bytes_Fed, Bytes_Scanned, Tokens_Scanned,
+--  Statements_Parsed, Checkpoint_Calls,
+--  Maximum_Pending_Bytes, Maximum_Pending_Tokens</code></pre></figure>
+            <aside class="callout"><span class="callout-symbol" aria-hidden="true">i</span><p><code>Maximum_Pending_Bytes</code> reports how much the parser held: the high-water mark of the buffer, which for well-formed input is one partial token. <code>Bytes_Scanned</code> counts bytes the scanner walked and <code>Bytes_Fed</code> counts bytes handed in. The first exceeds the second, because a token split across chunks is walked again when the rest of it arrives; their ratio is bounded. A ratio that grows with input size means scanning has become quadratic, which is what the scaling check in the benchmarks asserts against.</p></aside>
           </section>
 <section id="terms">
             <span class="step-label">STEP 09</span>

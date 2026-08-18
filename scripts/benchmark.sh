@@ -25,10 +25,17 @@ mkdir -p "$results"
 cd "$project_root/benchmarks"
 "$alr" -n build
 
+#  Through a pipe the shell reports tee's status, not the benchmark's, so
+#  a failed scaling check would leave the script reporting success. Write
+#  the file first, then show it.
+status=0
 "$project_root/benchmarks/bin/benchmarks" "$rounds" \
-   | tee "$results/$label.txt"
+   > "$results/$label.txt" 2>&1 || status=$?
+cat "$results/$label.txt"
 
 if [ -f "$results/baseline.txt" ] && [ "$label" != "baseline" ]; then
    printf '\n== against baseline ==\n'
    diff -u "$results/baseline.txt" "$results/$label.txt" || true
 fi
+
+exit "$status"

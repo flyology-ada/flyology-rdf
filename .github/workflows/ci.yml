@@ -139,9 +139,13 @@ jobs:
           alr index --reset-community
           alr index --add=git+https://github.com/flyology-ada/alire-index.git --name=flyology --before=community
       # Timings from a shared runner are not comparable with timings from
-      # anywhere else, so nothing here is asserted about how long a case
-      # takes. What this catches is the benchmark crate rotting, which is
-      # what happens to code nothing builds.
+      # anywhere else, so no case is asserted to take any particular time.
+      # What is asserted is how cost grows with input: the scaling check
+      # counts bytes the scanner walked per byte fed at two input sizes
+      # and fails if the ratio climbs, which is what a quadratic rescan
+      # does and what a single timing cannot show. This step also catches
+      # the benchmark crate rotting, which is what happens to code
+      # nothing builds.
       - name: Build and run the benchmarks
         run: ./scripts/benchmark.sh 3 ci
 

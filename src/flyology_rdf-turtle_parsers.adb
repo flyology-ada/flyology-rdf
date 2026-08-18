@@ -1459,8 +1459,21 @@ package body Flyology_RDF.Turtle_Parsers is
       loop
          exit when Into.Failed;
 
-         Lexers.Scan
-           (Text, Position, Index, Ended, Result, Status, Error);
+         declare
+            Walked_From : constant Positive := Index;
+         begin
+            Lexers.Scan
+              (Text, Position, Index, Ended, Result, Status, Error);
+
+            --  An incomplete token means the scanner reached the end of
+            --  what it had. It walked every byte from where it started
+            --  to get there, and will walk them again next time.
+            Into.Work_Data.Bytes_Scanned :=
+              Into.Work_Data.Bytes_Scanned
+              + (if Status = Lexers.Needs_More_Input
+                 then Natural'Max (0, Text'Last - Walked_From + 1)
+                 else Index - Walked_From);
+         end;
 
          if Into.Checkpoint /= null then
             Into.Work_Units := Into.Work_Units + 1;
@@ -1580,8 +1593,7 @@ package body Flyology_RDF.Turtle_Parsers is
       end if;
 
       Into.Byte_Count := Into.Byte_Count + Bytes'Length;
-      Into.Work_Data.Bytes_Scanned :=
-        Into.Work_Data.Bytes_Scanned + Bytes'Length;
+      Into.Work_Data.Bytes_Fed := Into.Work_Data.Bytes_Fed + Bytes'Length;
 
       if Into.Byte_Count > Into.Limits_Data.Maximum_Bytes then
          Into.Failed := True;

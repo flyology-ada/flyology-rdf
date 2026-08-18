@@ -248,13 +248,19 @@ package Flyology_RDF.Turtle_Parsers is
 
    --  Deterministic account of scanning work, for tests that need to pin
    --  behaviour rather than timing.
-   --  @field Bytes_Scanned Input bytes examined
+   --  @field Bytes_Fed Input bytes handed to the parser
+   --  @field Bytes_Scanned Input bytes the scanner walked over. Larger
+   --    than Bytes_Fed, because a token split across chunks is walked
+   --    again when the rest of it arrives. The ratio between the two is
+   --    bounded; if it grows with input size, scanning has become
+   --    quadratic.
    --  @field Tokens_Scanned Tokens produced
    --  @field Statements_Parsed Statements completed
    --  @field Checkpoint_Calls Cooperative callbacks invoked
    --  @field Maximum_Pending_Bytes Largest retained partial token
    --  @field Maximum_Pending_Tokens Largest retained statement, in tokens
    type Work_Statistics is record
+      Bytes_Fed              : Natural := 0;
       Bytes_Scanned          : Natural := 0;
       Tokens_Scanned         : Natural := 0;
       Statements_Parsed      : Natural := 0;

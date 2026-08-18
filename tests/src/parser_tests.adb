@@ -85,6 +85,9 @@ procedure Parser_Tests is
       Diagnosed  : Boolean := False;
       Last_Code  : Parsers.Diagnostic_Code := Parsers.Malformed_Syntax;
       Graphs     : Natural := 0;
+      --  Which graphs were declared, in order. The count alone cannot
+      --  tell a right name from a wrong one.
+      Graph_Names : Unbounded.Unbounded_String;
       --  When set, On_Quad raises, which is how a consumer's own failure
       --  reaches the parser.
       Fail_Quads : Boolean := False;
@@ -109,9 +112,15 @@ procedure Parser_Tests is
       Graph  : Quads.Graph_Name;
       Span   : Parsers.Source_Span)
    is
-      pragma Unreferenced (Graph, Span);
+      pragma Unreferenced (Span);
    begin
       Target.Graphs := Target.Graphs + 1;
+      Unbounded.Append
+        (Target.Graph_Names,
+         (if Quads.Kind (Graph) = Quads.Default_Graph_Kind
+          then "(default)"
+          else Render (Quads.Name_Term (Graph)))
+         & " ");
    end On_Graph_Declaration;
 
    overriding procedure On_Quad
@@ -243,6 +252,66 @@ procedure Parser_Tests is
              "and the buffer never grew past the bound, reached"
              & Natural'Image (Parsers.Work (Parser).Maximum_Pending_Bytes));
    end Check_Unterminated_Is_Bounded;
+
+   --  Parse under a stated bound and require the diagnostic it names.
+   --  Feeding a byte at a time as well, because a bound checked only on
+   --  a whole document is a bound that a chunked caller does not have.
+   procedure Check_Limit
+     (Document, Label : String;
+      Limits          : Parsers.Parse_Limits;
+      Expected        : Parsers.Diagnostic_Code)
+   is
+      procedure Once (By_Byte : Boolean; Suffix : String);
+
+      procedure Once (By_Byte : Boolean; Suffix : String) is
+         Sink   : Collector;
+         Parser : Parsers.Parser :=
+           Parsers.Create (Source_Name => "test", Limits => Limits);
+         Status : Parsers.Parse_Status;
+      begin
+         if By_Byte then
+            for Index in Document'Range loop
+               Parsers.Feed (Parser, Document (Index .. Index), Sink);
+            end loop;
+         else
+            Parsers.Feed (Parser, Document, Sink);
+         end if;
+         Status := Parsers.Finish (Parser, Sink);
+         Check (Status = Parsers.Parse_Failed, Label & Suffix);
+         Check (Sink.Last_Code = Expected,
+                Label & Suffix & ", diagnosed "
+                & Parsers.Diagnostic_Code'Image (Expected) & ", got "
+                & Parsers.Diagnostic_Code'Image (Sink.Last_Code));
+      end Once;
+   begin
+      Once (False, "");
+      Once (True, " byte at a time");
+
+      --  And the same document under the default bounds must be
+      --  accepted. Without this the test passes for any document the
+      --  parser dislikes, and proves nothing about the limit at all.
+      declare
+         Sink   : Collector;
+         Parser : Parsers.Parser := Parsers.Create (Source_Name => "test");
+      begin
+         Parsers.Feed (Parser, Document, Sink);
+         Check (Parsers.Finish (Parser, Sink) = Parsers.Parse_Succeeded,
+                Label & ": the document is valid but for the limit");
+      end;
+   end Check_Limit;
+
+   --  Require the graph declarations a document makes, in order.
+   procedure Check_Graphs (Document, Label, Expected : String) is
+      Sink   : Collector;
+      Parser : Parsers.Parser := Parsers.Create (Source_Name => "test");
+      Status : Parsers.Parse_Status;
+   begin
+      Parsers.Feed (Parser, Document, Sink);
+      Status := Parsers.Finish (Parser, Sink);
+      Check (Status = Parsers.Parse_Succeeded, Label & " parses");
+      Check_Equal
+        (Unbounded.To_String (Sink.Graph_Names), Expected, Label);
+   end Check_Graphs;
 
 begin
    Check_Unterminated_Is_Bounded;
@@ -653,6 +722,105 @@ begin
       Check (Parsers.Finish (Parser, Sink) = Parsers.Parse_Failed,
              "a poisoned parser reports failure");
    end;
+
+   ------------------------------------------------------------------
+   --  Every declared limit, and the diagnostic each one reports
+   ------------------------------------------------------------------
+   --  A bound nothing reaches is a bound nothing tests. Each of these
+   --  states a small limit and then exceeds it by one.
+
+   Check_Limit
+     ("<http://example.org/a-fairly-long-subject> <http://e/p> "
+      & "<http://e/o> .",
+      "a document past the byte limit",
+      (Maximum_Bytes => 16, others => <>),
+      Parsers.Byte_Limit);
+
+   Check_Limit
+     ("<http://e/s> <http://e/p> <http://e/o> ."
+      & "<http://e/s> <http://e/p> <http://e/o2> ."
+      & "<http://e/s> <http://e/p> <http://e/o3> .",
+      "a third statement past a limit of two",
+      (Maximum_Quads => 2, others => <>),
+      Parsers.Quad_Limit);
+
+   Check_Limit
+     ("<http://e/s> <http://e/p> [ <http://e/q> [ <http://e/r> "
+      & "[ <http://e/t> 1 ] ] ] .",
+      "property lists nested past the nesting limit",
+      (Maximum_Nesting => 2, others => <>),
+      Parsers.Nesting_Limit);
+
+   --  Collections nest through the same counter, and a reader that
+   --  bounded one and not the other would still be reachable.
+   Check_Limit
+     ("<http://e/s> <http://e/p> ( ( ( 1 ) ) ) .",
+      "collections nested past the nesting limit",
+      (Maximum_Nesting => 2, others => <>),
+      Parsers.Nesting_Limit);
+
+   Check_Limit
+     ("@prefix a: <http://e/a/> ." & ASCII.LF
+      & "@prefix b: <http://e/b/> ." & ASCII.LF
+      & "@prefix c: <http://e/c/> ." & ASCII.LF,
+      "a third prefix past a limit of two",
+      (Maximum_Prefixes => 2, others => <>),
+      Parsers.Prefix_Limit);
+
+   --  Redefining a prefix already held is not a new prefix, so a
+   --  document that rebinds one name forever stays within the bound.
+   declare
+      Sink   : Collector;
+      Limits : constant Parsers.Parse_Limits :=
+        (Maximum_Prefixes => 2, others => <>);
+      Parser : Parsers.Parser :=
+        Parsers.Create (Source_Name => "test", Limits => Limits);
+   begin
+      for Round in 1 .. 8 loop
+         Parsers.Feed
+           (Parser, "@prefix a: <http://e/a/> ." & ASCII.LF, Sink);
+      end loop;
+      Check (Parsers.Finish (Parser, Sink) = Parsers.Parse_Succeeded,
+             "rebinding one prefix does not consume the prefix budget");
+   end;
+
+   ------------------------------------------------------------------
+   --  Graph declarations reach the sink
+   ------------------------------------------------------------------
+   --  On_Graph_Declaration is the only way a consumer learns a graph was
+   --  entered before its statements arrive, so what it carries matters.
+
+   Check_Graphs
+     (EX & "GRAPH ex:g { ex:s ex:p ex:o }",
+      "a GRAPH keyword declares its graph",
+      "<http://example.org/g> ");
+
+   Check_Graphs
+     (EX & "ex:g { ex:s ex:p ex:o }",
+      "a bare labelled block declares its graph",
+      "<http://example.org/g> ");
+
+   Check_Graphs
+     (EX & "GRAPH ex:g { ex:s ex:p ex:o } GRAPH ex:h { ex:s ex:p ex:o }",
+      "each block declares its own graph, in order",
+      "<http://example.org/g> <http://example.org/h> ");
+
+   Check_Graphs
+     (EX & "GRAPH _:g { ex:s ex:p ex:o }",
+      "a blank node names a graph",
+      "_:g ");
+
+   --  An anonymous block is the default graph, which is not a name, so
+   --  nothing is declared.
+   Check_Graphs
+     (EX & "{ ex:s ex:p ex:o }",
+      "an anonymous block declares no graph",
+      "");
+
+   Check_Graphs
+     (EX & "ex:s ex:p ex:o .",
+      "a document with no blocks declares no graph",
+      "");
 
    IO.Put_Line ("  checks              " & Checks'Image);
    IO.Put_Line ("  failures            " & Failures'Image);

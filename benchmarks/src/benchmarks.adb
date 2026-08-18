@@ -405,6 +405,132 @@ procedure Benchmarks is
       pragma Unreferenced (Ignored);
    end Parse_SPARQL;
 
+   ---------------------------------------------------------------------
+   --  Scaling
+   ---------------------------------------------------------------------
+   --  A benchmark reports a number. It cannot say whether that number
+   --  grows with the input or with its square, and the second is the
+   --  failure that matters: it is invisible at the size measured here
+   --  and fatal at the size a caller will use.
+   --
+   --  So run the same shape at two sizes and compare. The primary check
+   --  counts bytes the scanner walked, which is exact and does not
+   --  depend on how loaded the machine is. Feeding a byte at a time
+   --  makes every token cross a chunk boundary, which is the condition
+   --  under which a token is retained and walked again -- the shape of
+   --  the last regression here.
+
+   Scaling_Failures : Natural := 0;
+
+   procedure Require
+     (Condition : Boolean; Label : String; Detail : String);
+
+   procedure Require
+     (Condition : Boolean; Label : String; Detail : String) is
+   begin
+      if Condition then
+         IO.Put_Line ("  ok    " & Label & "  " & Detail);
+      else
+         Scaling_Failures := Scaling_Failures + 1;
+         IO.Put_Line ("  FAIL  " & Label & "  " & Detail);
+      end if;
+   end Require;
+
+   --  Bytes walked per byte fed. Flat in the document size when scanning
+   --  is linear: a token is walked once more for each chunk it spans,
+   --  and tokens do not grow as the document does.
+   function Scan_Ratio (Statements : Positive) return Long_Float is
+      Text   : constant String := Plain_Turtle (Statements);
+      Sink   : Collector;
+      Parser : Parsers.Parser :=
+        Parsers.Create
+          (Source_Name => "bench",
+           Base_IRI    => "http://example.org/bench/",
+           Syntax      => Parsers.Turtle_Syntax);
+      Ignored : Parsers.Parse_Status;
+   begin
+      for Index in Text'Range loop
+         Parsers.Feed (Parser, Text (Index .. Index), Sink);
+      end loop;
+      Ignored := Parsers.Finish (Parser, Sink);
+      declare
+         Done : constant Parsers.Work_Statistics := Parsers.Work (Parser);
+      begin
+         return Long_Float (Done.Bytes_Scanned)
+                / Long_Float (Natural'Max (1, Done.Bytes_Fed));
+      end;
+   end Scan_Ratio;
+
+   --  Median time for one parse of a document of the given size.
+   function Parse_Time (Statements : Positive) return Duration is
+      Text  : constant String := Plain_Turtle (Statements);
+      Taken : Duration_Array (1 .. Repetitions);
+
+      procedure Once;
+
+      procedure Once is
+         Sink   : Collector;
+         Parser : Parsers.Parser :=
+           Parsers.Create
+             (Source_Name => "bench",
+              Base_IRI    => "http://example.org/bench/",
+              Syntax      => Parsers.Turtle_Syntax);
+         Ignored : Parsers.Parse_Status;
+      begin
+         Parsers.Feed (Parser, Text, Sink);
+         Ignored := Parsers.Finish (Parser, Sink);
+      end Once;
+   begin
+      Once;
+      for Round in Taken'Range loop
+         declare
+            Started : constant RT.Time := RT.Clock;
+         begin
+            Once;
+            Taken (Round) := RT.To_Duration (RT.Clock - Started);
+         end;
+      end loop;
+      return Median (Taken);
+   end Parse_Time;
+
+   procedure Check_Scaling;
+
+   procedure Check_Scaling is
+      Small  : constant Positive := 500;
+      Large  : constant Positive := 4 * Small;
+
+      Ratio_Small : constant Long_Float := Scan_Ratio (Small);
+      Ratio_Large : constant Long_Float := Scan_Ratio (Large);
+
+      Time_Small : constant Duration := Parse_Time (Small);
+      Time_Large : constant Duration := Parse_Time (Large);
+
+      Growth : constant Long_Float :=
+        (if Time_Small > 0.0
+         then Long_Float (Time_Large) / Long_Float (Time_Small)
+         else 1.0);
+   begin
+      IO.Put_Line ("");
+      IO.Put_Line ("scaling, " & Small'Image & " to" & Large'Image
+                   & " statements");
+
+      --  Quadratic rescanning drives this up in proportion to the
+      --  document; linear scanning leaves it where it was.
+      Require
+        (Ratio_Large <= Ratio_Small * 1.5,
+         "scan work per byte is flat",
+         Fixed (Ratio_Small, 1) & " then " & Fixed (Ratio_Large, 1));
+
+      --  A backstop over everything the first check cannot see. Four
+      --  times the input at four times the cost is linear; sixteen is
+      --  quadratic. Eight leaves room for a loaded machine without
+      --  leaving room for a squared term.
+      Require
+        (Growth <= 8.0,
+         "time grows with input, not its square",
+         Fixed (Growth, 1) & "x for 4x the input");
+   end Check_Scaling;
+
    procedure Run_Parse_Turtle is new Measure (Parse_Turtle);
    procedure Run_Parse_Escaped is new Measure (Parse_Escaped);
    procedure Run_Parse_Lines is new Measure (Parse_Lines);
@@ -440,4 +566,13 @@ begin
    Run_Codec ("codec round trip", Turtle_Text'Length);
    Run_Parse_N3 ("n3 parse", N3_Text'Length);
    Run_Parse_SPARQL ("sparql parse", Query_Text'Length);
+
+   Check_Scaling;
+
+   if Scaling_Failures > 0 then
+      IO.Put_Line ("");
+      IO.Put_Line ("FAIL benchmarks:" & Scaling_Failures'Image
+                   & " scaling check(s)");
+      Ada.Command_Line.Set_Exit_Status (1);
+   end if;
 end Benchmarks;
