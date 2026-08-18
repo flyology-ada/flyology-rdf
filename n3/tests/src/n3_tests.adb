@@ -225,6 +225,46 @@ begin
    --  Round trips
    ------------------------------------------------------------------
    Check_Round_Trip (EX & "ex:s ex:p ex:o .", "a plain statement");
+
+   --  An anonymous node is a different existential from a named one, so a
+   --  document label whose spelling a generated label already took must be
+   --  renamed rather than merged with it.
+   declare
+      Parsed : constant Model.Term :=
+        Parsers.Parse (EX & "ex:x ex:p [] . _:b1 ex:q ex:r .");
+      Written : constant String := Writers.To_N3 (Parsed);
+      Occurrences : Natural := 0;
+   begin
+      for Index in Written'First .. Written'Last - 3 loop
+         if Written (Index .. Index + 3) = "_:b1" then
+            Occurrences := Occurrences + 1;
+         end if;
+      end loop;
+      Check (Occurrences <= 1,
+             "a document label does not merge with a generated one");
+   end;
+
+   --  And the rename is remembered, so every later mention of that label
+   --  is the same node rather than a fresh one each time.
+   declare
+      Parsed : constant Model.Term :=
+        Parsers.Parse
+          (EX & "ex:x ex:p [] . _:b1 ex:q ex:r . _:b1 ex:s ex:t .");
+      Written : constant String := Writers.To_N3 (Parsed);
+      Distinct : Natural := 0;
+   begin
+      for Index in Written'First .. Written'Last - 2 loop
+         if Written (Index .. Index + 1) = "_:"
+           and then (Index = Written'First
+                     or else Written (Index - 1) not in '0' .. '9')
+         then
+            Distinct := Distinct + 1;
+         end if;
+      end loop;
+      --  Three mentions of a blank node: the anonymous one and two of the
+      --  renamed label, which must be the same node.
+      Check (Distinct = 3, "a renamed label keeps its replacement");
+   end;
    Check_Round_Trip (EX & "?x ex:p ?y .", "variables");
    Check_Round_Trip (EX & "{ ex:a ex:b ?x } => { ex:c ex:d ?x } .",
                      "an implication over a variable");

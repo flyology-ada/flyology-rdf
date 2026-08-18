@@ -32,6 +32,22 @@ package body Flyology_RDF.Terms is
    --  BCP 47 shape, checked structurally rather than against the registry:
    --  non-empty alphanumeric subtags separated by single hyphens, the first
    --  of which is alphabetic.
+   --  Whether Label is a BLANK_NODE_LABEL.
+   --
+   --  Every other component of a term is validated, and a label must be
+   --  too: a dataset identifies a statement by its N-Quads serialization,
+   --  and a label is written into that serialization verbatim. A label
+   --  carrying N-Quads syntax therefore forges the identity of a statement
+   --  it is not, and two distinct statements silently become one.
+   --
+   --  The grammar is the N-Triples one: a name character or a digit, then
+   --  name characters and dots, ending on a name character. ASCII is
+   --  checked exactly; a byte above it belongs to one of the PN_CHARS_BASE
+   --  ranges often enough that rejecting the run outright would refuse
+   --  labels the parsers themselves produce, so a multi-byte sequence is
+   --  admitted and the encoding is what constrains it.
+   function Is_Well_Formed_Label (Label : String) return Boolean;
+
    function Is_Well_Formed_Language (Value : String) return Boolean;
 
    function Root (Value : Term) return Term_Node;
@@ -39,6 +55,42 @@ package body Flyology_RDF.Terms is
    procedure Require_Kind (Value : Term; Expected : Term_Kind);
 
    ----------------------------------------------------------------------
+
+   function Is_Well_Formed_Label (Label : String) return Boolean is
+
+      function Is_Name_Start (Item : Character) return Boolean
+      is (Item in 'A' .. 'Z' | 'a' .. 'z' | '_'
+          or else Character'Pos (Item) >= 16#80#);
+
+      function Is_Name_Char (Item : Character) return Boolean
+      is (Is_Name_Start (Item) or else Item in '0' .. '9' | '-');
+
+   begin
+      if Label'Length = 0 then
+         return False;
+      end if;
+
+      --  A label may open on a digit, unlike a prefixed name's prefix.
+      if not Is_Name_Start (Label (Label'First))
+        and then Label (Label'First) not in '0' .. '9'
+      then
+         return False;
+      end if;
+
+      --  A dot may appear inside a label but may not end it.
+      if Label (Label'Last) = '.' then
+         return False;
+      end if;
+
+      for Index in Label'First + 1 .. Label'Last loop
+         if not Is_Name_Char (Label (Index))
+           and then Label (Index) /= '.'
+         then
+            return False;
+         end if;
+      end loop;
+      return True;
+   end Is_Well_Formed_Label;
 
    function Is_Well_Formed_Language (Value : String) return Boolean is
       Subtag_Length : Natural := 0;
@@ -133,6 +185,10 @@ package body Flyology_RDF.Terms is
    begin
       if Label'Length = 0 then
          raise Invalid_Term with "blank node label is empty";
+      end if;
+      if not Is_Well_Formed_Label (Label) then
+         raise Invalid_Term with
+           "blank node label is not a BLANK_NODE_LABEL: " & Label;
       end if;
       Require_Payload (Label'Length);
       return Single

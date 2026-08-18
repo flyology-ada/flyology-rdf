@@ -211,6 +211,48 @@ begin
          Check (True, "empty blank label rejected");
    end;
 
+   --  A dataset identifies a statement by its N-Quads serialization, and a
+   --  label goes into that serialization verbatim. A label carrying
+   --  N-Quads syntax would forge another statement's identity, so the
+   --  grammar is enforced at construction rather than discovered later.
+   declare
+      Forged : constant String := "o _:g";
+      Ignored : Terms.Term := Terms.Blank_Node ("x");
+   begin
+      Ignored := Terms.Blank_Node (Forged);
+      Check (False, "a label carrying N-Quads syntax must be rejected");
+      pragma Unreferenced (Ignored);
+   exception
+      when Terms.Invalid_Term =>
+         Check (True, "a label carrying N-Quads syntax is rejected");
+   end;
+
+   declare
+      Ignored : Terms.Term := Terms.Blank_Node ("x");
+   begin
+      Ignored := Terms.Blank_Node ("trailing.");
+      Check (False, "a label ending in a dot must be rejected");
+      pragma Unreferenced (Ignored);
+   exception
+      when Terms.Invalid_Term =>
+         Check (True, "a label ending in a dot is rejected");
+   end;
+
+   --  The forms the grammar does admit, including the ones the parsers
+   --  themselves produce.
+   declare
+      Ignored : Terms.Term := Terms.Blank_Node ("b0");
+   begin
+      Ignored := Terms.Blank_Node ("0starts-with-a-digit");
+      Ignored := Terms.Blank_Node ("has.an.inner.dot");
+      Ignored := Terms.Blank_Node ("g12");
+      Check (True, "grammar-valid labels are admitted");
+      pragma Unreferenced (Ignored);
+   exception
+      when Terms.Invalid_Term =>
+         Check (False, "grammar-valid labels are admitted");
+   end;
+
    declare
       Node    : constant Terms.Term := Terms.IRI_Term (Alice);
       Ignored : IRIs.IRI := Alice;

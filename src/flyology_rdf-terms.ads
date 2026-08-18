@@ -87,6 +87,10 @@ package Flyology_RDF.Terms is
    --  @param Label Non-empty blank node label
    --  @return The corresponding term
    --  @exception Invalid_Term Label is empty
+   --  @exception Invalid_Term Label is empty, or is not a
+   --     BLANK_NODE_LABEL. A dataset identifies a statement by its N-Quads
+   --     serialization and a label is written into it verbatim, so a label
+   --     carrying N-Quads syntax would forge another statement's identity.
    function Blank_Node (Label : String) return Term;
 
    --  Build a typed literal.

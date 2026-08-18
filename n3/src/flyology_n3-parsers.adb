@@ -73,6 +73,11 @@ package body Flyology_N3.Parsers is
       --  Labels the document wrote itself, so a generated one never
       --  collides with them.
       Document_Labels : Label_Sets.Set;
+
+      --  Labels this parse generated, and the replacements issued for
+      --  document labels whose spelling a generated one had taken.
+      Generated_Labels : Label_Sets.Set;
+      Renamed_Labels   : Prefix_Maps.Map;
       Blank_Counter   : Natural := 0;
 
       procedure Fail (Message : String);
@@ -152,6 +157,11 @@ package body Flyology_N3.Parsers is
                  "b" & Image (Image'First + 1 .. Image'Last);
             begin
                if not Document_Labels.Contains (Label) then
+                  --  Remembered, because a document label with this
+                  --  spelling may still arrive and must not become this
+                  --  node: an anonymous node is a different existential
+                  --  from a named one.
+                  Generated_Labels.Include (Label);
                   return Model.From_RDF (Terms.Blank_Node (Label));
                end if;
             end;
@@ -168,6 +178,25 @@ package body Flyology_N3.Parsers is
          if Raw'Length = 0 then
             return Fresh_Blank;
          end if;
+
+         --  A label whose spelling an anonymous node already took names a
+         --  different node, and the anonymous one cannot be renamed after
+         --  the fact, so this one is. The renaming is remembered, because
+         --  every later mention of the label is the same node.
+         if Renamed_Labels.Contains (Raw) then
+            return Model.From_RDF
+              (Terms.Blank_Node (Renamed_Labels.Element (Raw)));
+         end if;
+         if Generated_Labels.Contains (Raw) then
+            declare
+               Replacement : constant Model.Term := Fresh_Blank;
+            begin
+               Renamed_Labels.Insert
+                 (Raw, Terms.Label (Model.RDF_Value (Replacement)));
+               return Replacement;
+            end;
+         end if;
+
          if not Document_Labels.Contains (Raw) then
             Document_Labels.Insert (Raw);
          end if;
