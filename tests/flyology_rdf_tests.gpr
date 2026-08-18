@@ -1,5 +1,6 @@
 with "flyology_rdf.gpr";
 with "flyology_iri.gpr";
+with "flyology_http.gpr";
 
 project Flyology_RDF_Tests is
    for Source_Dirs use ("src");

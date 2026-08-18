@@ -41,6 +41,12 @@ with Ada.Text_IO;
 
 with GNAT.OS_Lib;
 
+with Flyology;
+with Flyology.Bytes;
+with Flyology.HTTP;
+with Flyology.HTTP.Client;
+with Flyology.HTTP.Methods;
+
 with Flyology_RDF.Canonicalization;
 with Flyology_RDF.Datasets;
 with Flyology_RDF.Quads;
@@ -52,6 +58,8 @@ procedure Oracle_Differential is
    package IO renames Ada.Text_IO;
    package Unbounded renames Ada.Strings.Unbounded;
    package OS renames GNAT.OS_Lib;
+   package HTTPC renames Flyology.HTTP.Client;
+   package Methods renames Flyology.HTTP.Methods;
    package Canon renames Flyology_RDF.Canonicalization;
    package Datasets renames Flyology_RDF.Datasets;
    package Quads renames Flyology_RDF.Quads;
@@ -60,6 +68,7 @@ procedure Oracle_Differential is
 
    use type Parsers.Parse_Status;
    use type Ada.Directories.File_Size;
+   use type OS.Process_Id;
 
    --  Everything resolves against one base, on both sides, so that a
    --  relative reference cannot be the reason for a disagreement.
@@ -71,7 +80,10 @@ procedure Oracle_Differential is
    --  a cap nobody reports reads as coverage nobody had.
    Maximum_Bytes : constant := 256 * 1024;
 
-   type Oracle_Id is (Oxigraph, Jena);
+   --  Fuseki is Jena behind an HTTP server, so it answers the same as riot
+   --  and pays one JVM start for the run instead of one per document. riot
+   --  is the fallback for when Fuseki will not start.
+   type Oracle_Id is (Fuseki, Oxigraph, Riot);
 
    type Tally is record
       Parser_Read     : Natural := 0;
@@ -88,12 +100,77 @@ procedure Oracle_Differential is
    Present : array (Oracle_Id) of Boolean := (others => False);
    Command : array (Oracle_Id) of Unbounded.Unbounded_String;
 
+   --  Oracle behaviours we have read the specification on and settled.
+   --  Each is a place an oracle departs from what RDF requires, with the
+   --  citation and the corpus entry that decides it. A disagreement on
+   --  this list is reported and not counted against us. A disagreement
+   --  that is not on it is unsettled, and fails the run until somebody
+   --  reads the specification and either fixes this crate or adds a line
+   --  here -- which is the point: the list is the record of that reading,
+   --  not a way to make a red run green.
+   type Deviation is record
+      Who   : Oracle_Id;
+      Where : Unbounded.Unbounded_String;
+      Why   : Unbounded.Unbounded_String;
+   end record;
+
+   function D (Who : Oracle_Id; Where, Why : String) return Deviation
+   is (Who   => Who,
+       Where => Unbounded.To_Unbounded_String (Where),
+       Why   => Unbounded.To_Unbounded_String (Why));
+
+   Settled : constant array (Positive range <>) of Deviation :=
+     (D (Oxigraph, "normalization-02",
+         "oxigraph does not apply remove_dot_segments to a reference that"
+         & " carries its own scheme; RFC 3986 5.2.2 applies it regardless,"
+         & " and the corpus expects the normalized form"),
+      D (Fuseki, "IRI-resolution-07",
+         "Jena resolves non-strictly when a reference's scheme matches the"
+         & " base's -- the backward-compatibility behaviour RFC 3986 5.2.2"
+         & " describes and RDF 1.1 does not take. It reads <http:g> against"
+         & " an http: base as a relative reference; the corpus expects"
+         & " <http:g> unchanged"),
+      D (Riot, "IRI-resolution-07",
+         "the same non-strict resolution as Fuseki, which is the same"
+         & " parser reached a different way"));
+
+   --  Whether this oracle disagreeing here is one of the settled ones.
+   function Is_Settled
+     (Who   : Oracle_Id;
+      Path  : String;
+      Why   : out Unbounded.Unbounded_String) return Boolean is
+   begin
+      for Item of Settled loop
+         if Item.Who = Who
+           and then Ada.Strings.Fixed.Index
+                      (Path, Unbounded.To_String (Item.Where)) > 0
+         then
+            Why := Item.Why;
+            return True;
+         end if;
+      end loop;
+      Why := Unbounded.Null_Unbounded_String;
+      return False;
+   end Is_Settled;
+
    Considered      : Natural := 0;
    Skipped_Large   : Natural := 0;
    We_Accepted     : Natural := 0;
    Cross_Checked   : Natural := 0;
+   Documented      : Natural := 0;
    Divergences     : Unbounded.Unbounded_String;
    Contested       : Unbounded.Unbounded_String;
+   Deviations      : Unbounded.Unbounded_String;
+
+   --  The HTTP conversation with Fuseki. Configured and used only from the
+   --  worker task, because the client belongs to the task that drives it.
+   Fuseki_Port : constant := 3131;
+   Fuseki_Base : constant String :=
+     "http://127.0.0.1:" & Ada.Strings.Fixed.Trim
+       (Natural'Image (Fuseki_Port), Ada.Strings.Left);
+   HTTP        : aliased HTTPC.Client (Capacity => 1);
+   Fuseki_Live : Boolean := False;
+   Fuseki_PID  : OS.Process_Id := OS.Invalid_Pid;
 
    Scratch : constant String := "obj/oracle";
 
@@ -166,6 +243,57 @@ procedure Oracle_Differential is
          Data := Datasets.Empty;
    end Load;
 
+   --  One HTTP exchange with Fuseki.
+   function Exchange
+     (Method       : Flyology.HTTP.Method;
+      Target       : String;
+      Content_Type : String := "";
+      Payload      : String := "";
+      Accepts      : String := "";
+      Status       : out Natural) return String
+   is
+      Request : HTTPC.Request;
+   begin
+      HTTPC.Set_Method (Request, Method);
+      HTTPC.Set_Target (Request, Target);
+      if Content_Type /= "" then
+         HTTPC.Add_Header (Request, "Content-Type", Content_Type);
+      end if;
+      if Accepts /= "" then
+         HTTPC.Add_Header (Request, "Accept", Accepts);
+      end if;
+      if Payload /= "" then
+         HTTPC.Set_Body (Request, Payload);
+      end if;
+      declare
+         Reply : HTTPC.Response := HTTPC.Execute (HTTP, Request);
+      begin
+         Status := Natural (HTTPC.Status (Reply));
+         return Flyology.Bytes.To_Byte_String
+           (HTTPC.Read_All (Reply, Maximum => 32 * 1024 * 1024));
+      end;
+   exception
+      when others =>
+         Status := 0;
+         return "";
+   end Exchange;
+
+   --  The media type Fuseki wants for each syntax we hand it.
+   function Media_Type (From : String) return String
+   is (if From = "ttl" then "text/turtle"
+       elsif From = "trig" then "application/trig"
+       elsif From = "nt" then "application/n-triples"
+       else "application/n-quads");
+
+   --  Turtle and TriG carry relative references, and the Graph Store
+   --  Protocol resolves them against the request URI rather than against
+   --  anything we can pass. Saying the base in the document is how the
+   --  other oracle is told the same thing on its command line.
+   function With_Base (From, Text : String) return String
+   is (if From in "ttl" | "trig"
+       then "BASE <" & Base & ">" & ASCII.LF & Text
+       else Text);
+
    --  Hand text to an oracle and take back its N-Quads. A non-zero exit is
    --  the oracle declining, which is its own answer and not ours.
    procedure Convert
@@ -188,6 +316,51 @@ procedure Oracle_Differential is
       end if;
 
       case Which is
+         when Fuseki =>
+            declare
+               Code : Natural;
+               Wiped : constant String :=
+                 Exchange (Methods.POST, "/ds",
+                           Content_Type => "application/sparql-update",
+                           Payload      => "CLEAR ALL",
+                           Status       => Code);
+            begin
+               pragma Unreferenced (Wiped);
+               if Code not in 200 | 204 then
+                  Succeeded := False;
+                  return;
+               end if;
+            end;
+            declare
+               Code : Natural;
+               Sent : constant String :=
+                 Exchange (Methods.POST, "/ds",
+                           Content_Type => Media_Type (From),
+                           Payload      => With_Base (From, Text),
+                           Status       => Code);
+            begin
+               pragma Unreferenced (Sent);
+               if Code not in 200 | 201 | 204 then
+                  --  Fuseki refused the document. That is it declining,
+                  --  the same as a non-zero exit from a command.
+                  Succeeded := False;
+                  return;
+               end if;
+            end;
+            declare
+               Code : Natural;
+               Body_Text : constant String :=
+                 Exchange (Methods.GET, "/ds",
+                           Accepts => "application/n-quads",
+                           Status  => Code);
+            begin
+               Succeeded := Code = 200;
+               if Succeeded then
+                  Output := Unbounded.To_Unbounded_String (Body_Text);
+               end if;
+            end;
+            return;
+
          when Oxigraph =>
             Sink := OS.Create_File (Log_Path, OS.Binary);
             declare
@@ -205,7 +378,7 @@ procedure Oracle_Differential is
             end;
             OS.Close (Sink);
 
-         when Jena =>
+         when Riot =>
             --  riot writes to standard output, so the output file is the
             --  spawn's descriptor rather than an argument. Its warnings
             --  would otherwise land in the middle of the N-Quads, which is
@@ -344,13 +517,20 @@ procedure Oracle_Differential is
          return Answered;
       end Ask;
 
-      --  Ask the fast oracle; where it cannot answer, ask the slow one.
-      procedure Ask_In_Turn
+      --  Ask every oracle that is present. They are all cheap now, and a
+      --  second independent opinion on a document the first one answered
+      --  is the only thing that catches a misreading we happen to share
+      --  with it.
+      procedure Ask_All
         (Subject  : String;
          From     : String;
          Expected : String;
          Parser   : Boolean)
       is
+         Results : array (Oracle_Id) of Outcome := (others => Declined);
+         Reasons : array (Oracle_Id) of Unbounded.Unbounded_String;
+         Agreed  : Natural := 0;
+
          procedure Record_It (Which : Oracle_Id; Result : Outcome) is
          begin
             if Parser then
@@ -385,52 +565,58 @@ procedure Oracle_Differential is
                end case;
             end if;
          end Record_It;
-
-         First, Second : Outcome;
-         Why, Ignored  : Unbounded.Unbounded_String;
       begin
-         if Present (Oxigraph) then
-            First := Ask (Oxigraph, Subject, From, Expected, Why);
-            if First = Answered then
-               Record_It (Oxigraph, First);
-               return;
-            end if;
-
-            if First = Disagreed then
-               --  One oracle disagreeing is a lead, not a verdict. If the
-               --  other agrees with us, the two oracles disagree with each
-               --  other, and that is a fact about them. Only an oracle
-               --  disagreeing with no second opinion, or two disagreeing
-               --  together, is evidence against us.
-               if Present (Jena) then
-                  Second := Ask (Jena, Subject, From, Expected, Ignored);
-                  if Second = Answered then
-                     Cross_Checked := Cross_Checked + 1;
-                     Unbounded.Append
-                       (Contested,
-                        "    " & Path & ": " & Unbounded.To_String (Why)
-                        & ", JENA agrees with us" & ASCII.LF);
-                     Record_It (Jena, Second);
-                     return;
-                  end if;
+         for Which in Oracle_Id loop
+            if Present (Which) then
+               Results (Which) :=
+                 Ask (Which, Subject, From, Expected, Reasons (Which));
+               if Results (Which) = Answered then
+                  Agreed := Agreed + 1;
                end if;
-               Record_It (Oxigraph, First);
-               Note (Path, Unbounded.To_String (Why));
-               return;
             end if;
+         end loop;
 
-            --  Declined, or answered an older specification.
-            Record_It (Oxigraph, First);
-         end if;
-
-         if Present (Jena) then
-            Second := Ask (Jena, Subject, From, Expected, Why);
-            Record_It (Jena, Second);
-            if Second = Disagreed then
-               Note (Path, Unbounded.To_String (Why));
+         for Which in Oracle_Id loop
+            if Present (Which) then
+               if Results (Which) = Disagreed then
+                  declare
+                     Why : Unbounded.Unbounded_String;
+                  begin
+                     if Is_Settled (Which, Path, Why) then
+                        --  A departure we have read the specification on.
+                        --  Reported with its citation, not counted
+                        --  against us.
+                        Documented := Documented + 1;
+                        Unbounded.Append
+                          (Deviations,
+                           "    " & Path & ": "
+                           & Unbounded.To_String (Reasons (Which))
+                           & ASCII.LF & "      " & Unbounded.To_String (Why)
+                           & ASCII.LF);
+                        Record_It (Which, Answered);
+                     else
+                        Record_It (Which, Results (Which));
+                        Note (Path, Unbounded.To_String (Reasons (Which)));
+                        if Agreed > 0 then
+                           --  Another oracle agreed with us, so this is
+                           --  probably theirs -- but probably is not a
+                           --  citation, and an unsettled disagreement is
+                           --  something to settle, not to wave through.
+                           Cross_Checked := Cross_Checked + 1;
+                           Unbounded.Append
+                             (Contested,
+                              "    " & Path
+                              & ": another oracle agrees with us, but this"
+                              & " departure is not recorded" & ASCII.LF);
+                        end if;
+                     end if;
+                  end;
+               else
+                  Record_It (Which, Results (Which));
+               end if;
             end if;
-         end if;
-      end Ask_In_Turn;
+         end loop;
+      end Ask_All;
 
    begin
       Considered := Considered + 1;
@@ -449,12 +635,12 @@ procedure Oracle_Differential is
             return;
          end if;
 
-         --  Does an oracle read the document the way we do?
-         Ask_In_Turn (Text, Oracle_Format (Syntax), Expected, True);
+         --  Do the oracles read the document the way we do?
+         Ask_All (Text, Oracle_Format (Syntax), Expected, True);
 
-         --  And does it read our serialization the way we wrote it? That
+         --  And do they read our serialization the way we wrote it? That
          --  is the question the suites cannot ask.
-         Ask_In_Turn (Writers.To_TriG (Mine), "trig", Expected, False);
+         Ask_All (Writers.To_TriG (Mine), "trig", Expected, False);
       end;
    exception
       when others =>
@@ -503,37 +689,43 @@ procedure Oracle_Differential is
    Oxigraph_Path : constant String :=
      "../vendor/oracles/oxigraph/bin/oxigraph";
    Jena_Home : constant String := "../vendor/oracles/java";
-   Jena_Path : constant String :=
+   Riot_Path : constant String :=
      "../vendor/oracles/apache-jena-6.2.0/bin/riot";
+   Fuseki_Dir : constant String :=
+     "../vendor/oracles/apache-jena-fuseki-6.2.0";
 
-   Any_Read : Natural := 0;
+   Any_Read       : Natural := 0;
    Total_Differed : Natural := 0;
+
+   --  Start Fuseki and wait until it answers. It is Jena with one JVM
+   --  start for the whole run rather than one per document, which is what
+   --  makes asking it about every document affordable.
+   procedure Start_Fuseki is
+      Log : constant OS.File_Descriptor :=
+        OS.Create_File (Scratch & "/fuseki.log", OS.Binary);
+      Arguments : constant OS.Argument_List :=
+        (new String'("--mem"),
+         new String'("--port=" & Ada.Strings.Fixed.Trim
+                       (Natural'Image (Fuseki_Port), Ada.Strings.Left)),
+         new String'("/ds"));
+   begin
+      Fuseki_PID :=
+        OS.Non_Blocking_Spawn
+          (Fuseki_Dir & "/fuseki-server", Arguments, Log,
+           Err_To_Out => True);
+      Fuseki_Live := Fuseki_PID /= OS.Invalid_Pid;
+   end Start_Fuseki;
+
+   procedure Stop_Fuseki is
+   begin
+      if Fuseki_Live and then Fuseki_PID /= OS.Invalid_Pid then
+         OS.Kill (Fuseki_PID, Hard_Kill => True);
+         Fuseki_Live := False;
+      end if;
+   end Stop_Fuseki;
 
 begin
    IO.Put_Line ("Oracle differential");
-
-   if Ada.Directories.Exists (Oxigraph_Path) then
-      Present (Oxigraph) := True;
-      Command (Oxigraph) := Unbounded.To_Unbounded_String (Oxigraph_Path);
-   end if;
-
-   if Ada.Directories.Exists (Jena_Path)
-     and then Ada.Directories.Exists (Jena_Home)
-   then
-      --  riot finds its runtime through JAVA_HOME, and the one we
-      --  provisioned is the one whose version is recorded.
-      Ada.Environment_Variables.Set
-        ("JAVA_HOME", Ada.Directories.Full_Name (Jena_Home));
-      Present (Jena) := True;
-      Command (Jena) := Unbounded.To_Unbounded_String (Jena_Path);
-   end if;
-
-   if not (Present (Oxigraph) or else Present (Jena)) then
-      IO.Put_Line ("  SKIP  no oracle is provisioned");
-      IO.Put_Line ("        run ../scripts/provision-oracles.sh");
-      IO.Put_Line ("PASS oracle_differential (skipped)");
-      return;
-   end if;
 
    if not Ada.Directories.Exists (Corpus) then
       IO.Put_Line ("  SKIP  the corpus is not provisioned");
@@ -545,15 +737,140 @@ begin
       Ada.Directories.Create_Path (Scratch);
    end if;
 
-   for Which in Oracle_Id loop
-      IO.Put_Line
-        ("  oracle              " & Which'Image
-         & (if Present (Which)
-            then " at " & Unbounded.To_String (Command (Which))
-            else " -- not provisioned, skipped"));
-   end loop;
+   if Ada.Directories.Exists (Oxigraph_Path) then
+      Present (Oxigraph) := True;
+      Command (Oxigraph) := Unbounded.To_Unbounded_String (Oxigraph_Path);
+   end if;
 
-   Walk (Corpus);
+   if Ada.Directories.Exists (Jena_Home) then
+      --  Both Jena forms find their runtime through JAVA_HOME, and the one
+      --  we provisioned is the one whose version is recorded.
+      Ada.Environment_Variables.Set
+        ("JAVA_HOME", Ada.Directories.Full_Name (Jena_Home));
+
+      if Ada.Directories.Exists (Fuseki_Dir & "/fuseki-server") then
+         Start_Fuseki;
+      end if;
+
+      --  riot answers the same as Fuseki at a JVM start a document, so it
+      --  stands in only when Fuseki did not come up.
+      if not Fuseki_Live and then Ada.Directories.Exists (Riot_Path) then
+         Present (Riot) := True;
+         Command (Riot) := Unbounded.To_Unbounded_String (Riot_Path);
+      end if;
+   end if;
+
+   declare
+      --  The HTTP client belongs to the task that drives it, and a
+      --  lightweight task is what this crate says it runs well inside, so
+      --  the differential is also the one place that demonstrates it.
+      task Worker is
+         pragma Task_Info (Flyology.Lightweight_Task);
+      end Worker;
+
+      task body Worker is
+      begin
+         if Fuseki_Live then
+            HTTPC.Configure
+              (HTTP, Flyology.HTTP.Parse_Origin (Fuseki_Base));
+
+            --  Wait for it to answer, rather than guessing how long a JVM
+            --  takes to start.
+            for Attempt in 1 .. 60 loop
+               declare
+                  Code  : Natural;
+                  Reply : constant String :=
+                    Exchange (Methods.GET, "/$/ping", Status => Code);
+               begin
+                  pragma Unreferenced (Reply);
+                  exit when Code = 200;
+               end;
+               delay 0.5;
+            end loop;
+
+            declare
+               Code  : Natural;
+               Reply : constant String :=
+                 Exchange (Methods.GET, "/$/ping", Status => Code);
+            begin
+               pragma Unreferenced (Reply);
+               Present (Fuseki) := Code = 200;
+            end;
+
+            if not Present (Fuseki) then
+               IO.Put_Line ("  note  Fuseki did not answer; falling back");
+               if Ada.Directories.Exists (Riot_Path) then
+                  Present (Riot) := True;
+                  Command (Riot) :=
+                    Unbounded.To_Unbounded_String (Riot_Path);
+               end if;
+            end if;
+         end if;
+
+         for Which in Oracle_Id loop
+            if Present (Which) then
+               IO.Put_Line
+                 ("  oracle              " & Which'Image
+                  & (if Which = Fuseki then " at " & Fuseki_Base
+                     else " at " & Unbounded.To_String (Command (Which))));
+            end if;
+         end loop;
+
+         if Ada.Command_Line.Argument_Count > 0 then
+            --  Named documents only, with the serialization printed. A
+            --  contested case is read by hand, and this is what it is
+            --  read from.
+            for Index in 1 .. Ada.Command_Line.Argument_Count loop
+               declare
+                  Path : constant String := Ada.Command_Line.Argument (Index);
+                  Data : Datasets.Dataset;
+                  Ours : Boolean;
+               begin
+                  Load (Read_File (Path), Syntax_Of (Path), Data, Ours);
+                  IO.Put_Line ("--- " & Path & " ---");
+                  if not Ours then
+                     IO.Put_Line ("(we reject it)");
+                  else
+                     IO.Put_Line ("--- our TriG ---");
+                     IO.Put (Writers.To_TriG (Data));
+                     IO.Put_Line ("--- our canonical form ---");
+                     IO.Put (Canonical (Data));
+                     for Which in Oracle_Id loop
+                        if Present (Which) then
+                           declare
+                              Theirs : Unbounded.Unbounded_String;
+                              Done   : Boolean;
+                           begin
+                              Convert (Which, Writers.To_TriG (Data),
+                                       "trig", Theirs, Done);
+                              IO.Put_Line
+                                ("--- " & Which'Image
+                                 & " on our TriG (ok=" & Done'Image & ") ---");
+                              IO.Put (Unbounded.To_String (Theirs));
+                           end;
+                        end if;
+                     end loop;
+                  end if;
+               end;
+            end loop;
+         else
+            Walk (Corpus);
+         end if;
+      end Worker;
+   begin
+      null;
+   end;
+
+   Stop_Fuseki;
+
+   if not (Present (Fuseki) or else Present (Oxigraph)
+           or else Present (Riot))
+   then
+      IO.Put_Line ("  SKIP  no oracle is provisioned");
+      IO.Put_Line ("        run ../scripts/provision-oracles.sh");
+      IO.Put_Line ("PASS oracle_differential (skipped)");
+      return;
+   end if;
 
    IO.Put_Line ("  documents seen      " & Considered'Image);
    IO.Put_Line ("  skipped, over 256K  " & Skipped_Large'Image);
@@ -586,9 +903,16 @@ begin
       end if;
    end loop;
 
-   IO.Put_Line ("  oracles disagreed   " & Cross_Checked'Image);
+   IO.Put_Line ("  documented deviation" & Documented'Image);
+   IO.Put_Line ("  unsettled           " & Cross_Checked'Image);
+
+   if Unbounded.Length (Deviations) > 0 then
+      IO.Put_Line ("  oracle deviations, read and settled:");
+      IO.Put (Unbounded.To_String (Deviations));
+   end if;
+
    if Unbounded.Length (Contested) > 0 then
-      IO.Put_Line ("  contested, second opinion agreed with us:");
+      IO.Put_Line ("  unsettled disagreements:");
       IO.Put (Unbounded.To_String (Contested));
    end if;
 

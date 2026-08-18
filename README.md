@@ -143,25 +143,46 @@ serialization bug found so far -- tab, backspace and form feed written as
 numeric escapes where the canonical form names short ones -- was of exactly
 that shape, and it survived 23 hand-written checks.
 
-The two oracles are asked in order rather than both of everything. oxigraph
-is native and answers in milliseconds, but 0.4 implements RDF-star, the
-draft that preceded RDF 1.2, and reads `<< >>` as a quoted triple where RDF
-1.2 reads a reified triple; its answer there describes the older
-specification rather than either implementation, so it is not compared.
-Jena implements RDF 1.2 and costs half a second a document, which is too
-much for every document and right for the ones oxigraph could not answer.
+Both oracles are asked about everything, because a second independent
+opinion on a document the first one answered is the only thing that catches
+a misreading we happen to share with it. Jena is reached through Fuseki
+rather than through `riot`: the same parser behind an HTTP server pays one
+JVM start for the run instead of one per document, which is the difference
+between asking it about 575 documents and asking it about all of them. The
+client is this ecosystem's own, driven from a lightweight task -- the one
+place the crate's claim about running inside such a runtime is exercised
+rather than asserted. `riot` stands in when Fuseki will not start.
 
-One oracle disagreeing is a lead, not a verdict. When one does, the other
-is asked, and if it agrees with us then the two oracles disagree with each
-other -- a fact about them, reported as contested rather than counted
-against us. Only a disagreement with no second opinion, or two oracles
-disagreeing together, fails the run. There is one contested case today:
-oxigraph 0.4 does not remove dot segments from an absolute IRI reference,
-where RFC 3986 §5.2.2 applies `remove_dot_segments` whether or not the
-reference carries its own scheme. Jena reads it as we do.
+oxigraph 0.4 implements RDF-star, the draft that preceded RDF 1.2, and
+reads `<< >>` as a quoted triple where RDF 1.2 reads a reified triple. That
+answer describes the older specification rather than either
+implementation, so it is counted apart and not compared.
 
-Coverage: 2,443 documents seen, 2,081 accepted, and 2,049 of those had
-their serialization read back by a foreign parser. No writer divergence.
+One oracle disagreeing is a lead, not a verdict -- but "another oracle
+agrees with us" is an inference, not a citation, so it is not what decides
+the run. The harness carries a list of oracle departures that have been
+read against the specification, each with its citation and the corpus entry
+that settles it. A disagreement on that list is reported with its reason
+and not counted against us. A disagreement that is *not* on it fails the
+run, whatever the other oracles say, until somebody reads the
+specification and either fixes this crate or adds a line -- which is the
+point of the list: it is the record of that reading, not a way to make a
+red run green.
+
+Five departures are recorded today, and the W3C expected results side with
+us in all five:
+
+- oxigraph does not apply `remove_dot_segments` to a reference carrying its
+  own scheme, where RFC 3986 §5.2.2 applies it regardless.
+- Jena resolves non-strictly when a reference's scheme matches the base's,
+  the backward-compatibility behaviour RFC 3986 §5.2.2 describes and RDF
+  1.1 does not take: it reads `<http:g>` against an `http:` base as
+  `<.../g>` where the corpus says `<http:g>`. It only appears on our
+  serialization, because the document's own base is a `file:` IRI and the
+  schemes differ there.
+
+Coverage: 2,443 documents seen, 2,081 accepted, 2,049 of those read back by
+Jena and 1,766 by oxigraph. No divergence from either.
 
 ## Licence
 
