@@ -1,0 +1,18 @@
+name = "flyology_rdf_benchmarks"
+description = "Benchmarks for flyology_rdf"
+version = "0.1.0-dev"
+licenses = "MIT OR Apache-2.0"
+authors = ["Yurii Rashkovskii"]
+maintainers = ["Yurii Rashkovskii <yrashk@gmail.com>"]
+maintainers-logins = ["yrashk"]
+executables = ["benchmarks"]
+
+[[depends-on]]
+flyology_rdf = "*"
+flyology_n3 = "*"
+flyology_sparql = "*"
+
+[[pins]]
+flyology_rdf = { path = ".." }
+flyology_n3 = { path = "../n3" }
+flyology_sparql = { path = "../sparql" }

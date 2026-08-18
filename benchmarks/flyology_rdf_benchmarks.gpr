@@ -1,0 +1,18 @@
+with "flyology_rdf.gpr";
+with "flyology_n3.gpr";
+with "flyology_sparql.gpr";
+
+project Flyology_RDF_Benchmarks is
+   for Source_Dirs use ("src");
+   for Object_Dir use "obj";
+   for Exec_Dir use "bin";
+   for Main use ("benchmarks.adb");
+   for Create_Missing_Dirs use "True";
+
+   package Compiler is
+      --  Measured at the optimization a consumer gets, and without
+      --  assertions: a benchmark that timed the checks would be measuring
+      --  the test build rather than the library.
+      for Default_Switches ("Ada") use ("-gnat2022", "-O2", "-gnatwa", "-g");
+   end Compiler;
+end Flyology_RDF_Benchmarks;

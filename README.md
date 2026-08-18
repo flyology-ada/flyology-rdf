@@ -191,6 +191,16 @@ us in all five:
 Coverage: 2,443 documents seen, 2,081 accepted, 2,049 of those read back by
 Jena and 1,766 by oxigraph. No divergence from either.
 
+## Benchmarks
+
+`./scripts/benchmark.sh` builds at the optimization a consumer gets, without
+assertions, and reports the median of an odd number of runs: a mean is moved
+by one descheduled iteration and a middle observation is not. Every case is
+generated rather than read from a corpus, so a run measures the same work on
+any machine and needs nothing provisioned. Results land in
+`benchmark-results/` and are diffed against `baseline.txt` when one is
+saved, because a performance change is a measurement and not an impression.
+
 ## Licence
 
 MIT OR Apache-2.0.
