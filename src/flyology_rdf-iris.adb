@@ -76,10 +76,47 @@ package body Flyology_RDF.IRIs is
          Bytes       => Unbounded.To_Unbounded_String (Value));
    end From_UTF_8;
 
+   --  Whether Reference could contain a "." or ".." path segment. Such a
+   --  segment can only follow a '/', or the ':' that ends the scheme, or
+   --  open the string, so a reference with no dot in any of those
+   --  positions is known to be free of them without being parsed. The
+   --  test errs towards False positives -- a dot after a ':' inside a
+   --  query, say -- which only means taking the general path below.
+   function Might_Hold_Dot_Segment (Reference : String) return Boolean;
+
+   function Might_Hold_Dot_Segment (Reference : String) return Boolean is
+   begin
+      for Index in Reference'Range loop
+         if Reference (Index) = '.'
+           and then (Index = Reference'First
+                     or else Reference (Index - 1) in '/' | ':')
+         then
+            return True;
+         end if;
+      end loop;
+      return False;
+   end Might_Hold_Dot_Segment;
+
    function Resolve (Base : IRI; Reference : String) return IRI is
       Base_Reference : Flyology_IRI.Reference;
       Base_Error     : Flyology_IRI.Parse_Error;
    begin
+      --  RFC 3986 section 5.2.2 keeps a reference that carries its own
+      --  scheme as it stands, apart from removing dot segments from its
+      --  path. A reference this crate admits as an IRI that also cannot
+      --  contain a dot segment therefore resolves to exactly its own
+      --  bytes, and deciding that costs one parse of the reference where
+      --  the general path parses the base, the reference, and the
+      --  recomposed result. Prefixed names expand to exactly such
+      --  references, so this is the path a Turtle document mostly takes.
+      if not Might_Hold_Dot_Segment (Reference)
+        and then Admits (Reference)
+      then
+         return
+           (Initialized => True,
+            Bytes       => Unbounded.To_Unbounded_String (Reference));
+      end if;
+
       Flyology_IRI.Try_Parse
         (Input      => Unbounded.To_String (Base.Bytes),
          Value      => Base_Reference,

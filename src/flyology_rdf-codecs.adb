@@ -195,10 +195,15 @@ package body Flyology_RDF.Codecs is
       end loop;
    end Get_Length;
 
+   --  The run is described by its bounds rather than copied out: every
+   --  consumer below hands the bytes straight to a constructor, which
+   --  validates and copies them itself, so a copy here would be a third
+   --  one for every component decoded.
    procedure Get_Bytes
      (Bytes : String;
       Index : in out Positive;
-      Value : out Unbounded.Unbounded_String)
+      First : out Positive;
+      Last  : out Natural)
    is
       Length : Natural;
    begin
@@ -206,8 +211,8 @@ package body Flyology_RDF.Codecs is
       if Length > Bytes'Last - Index + 1 then
          Fail;
       end if;
-      Value := Unbounded.To_Unbounded_String
-        (Bytes (Index .. Index + Length - 1));
+      First := Index;
+      Last := Index + Length - 1;
       Index := Index + Length;
    end Get_Bytes;
 
@@ -229,19 +234,21 @@ package body Flyology_RDF.Codecs is
 
       if Tag = Tag_IRI then
          declare
-            Text : Unbounded.Unbounded_String;
+            First : Positive;
+            Last  : Natural;
          begin
-            Get_Bytes (Bytes, Index, Text);
+            Get_Bytes (Bytes, Index, First, Last);
             return Terms.IRI_Term
-              (IRIs.From_UTF_8 (Unbounded.To_String (Text)));
+              (IRIs.From_UTF_8 (Bytes (First .. Last)));
          end;
 
       elsif Tag = Tag_Blank then
          declare
-            Text : Unbounded.Unbounded_String;
+            First : Positive;
+            Last  : Natural;
          begin
-            Get_Bytes (Bytes, Index, Text);
-            return Terms.Blank_Node (Unbounded.To_String (Text));
+            Get_Bytes (Bytes, Index, First, Last);
+            return Terms.Blank_Node (Bytes (First .. Last));
          end;
 
       elsif Tag = Tag_Literal then
@@ -249,13 +256,17 @@ package body Flyology_RDF.Codecs is
             Fail;
          end if;
          declare
-            Flags     : constant Natural := Character'Pos (Bytes (Index));
-            Has_Tag   : constant Boolean := Flags mod 2 = 1;
-            Directed  : constant Boolean := (Flags / 2) mod 2 = 1;
-            Lexical   : Unbounded.Unbounded_String;
-            Datatype  : Unbounded.Unbounded_String;
-            Language  : Unbounded.Unbounded_String;
-            Direction : Terms.Base_Direction := Terms.Left_To_Right;
+            Flags          : constant Natural :=
+              Character'Pos (Bytes (Index));
+            Has_Tag        : constant Boolean := Flags mod 2 = 1;
+            Directed       : constant Boolean := (Flags / 2) mod 2 = 1;
+            Lexical_First  : Positive;
+            Lexical_Last   : Natural;
+            Datatype_First : Positive;
+            Datatype_Last  : Natural;
+            Language_First : Positive := 1;
+            Language_Last  : Natural := 0;
+            Direction      : Terms.Base_Direction := Terms.Left_To_Right;
          begin
             if Flags > Flag_Language + Flag_Direction then
                Fail;
@@ -268,15 +279,15 @@ package body Flyology_RDF.Codecs is
             end if;
             Index := Index + 1;
 
-            Get_Bytes (Bytes, Index, Lexical);
-            Get_Bytes (Bytes, Index, Datatype);
+            Get_Bytes (Bytes, Index, Lexical_First, Lexical_Last);
+            Get_Bytes (Bytes, Index, Datatype_First, Datatype_Last);
 
             --  The model fixes the datatype of a language-tagged literal,
             --  so an encoding that names any other one describes a term
             --  this crate will not build. Accepting it would also let two
             --  distinct byte strings decode to equal terms.
             if Has_Tag
-              and then Unbounded.To_String (Datatype)
+              and then Bytes (Datatype_First .. Datatype_Last)
                        /= (if Directed then RDF_Dir_Lang_String
                            else RDF_Lang_String)
             then
@@ -284,7 +295,7 @@ package body Flyology_RDF.Codecs is
             end if;
 
             if Has_Tag then
-               Get_Bytes (Bytes, Index, Language);
+               Get_Bytes (Bytes, Index, Language_First, Language_Last);
             end if;
 
             if Directed then
@@ -299,36 +310,38 @@ package body Flyology_RDF.Codecs is
                Index := Index + 1;
 
                return Terms.Directional_Literal
-                 (Unbounded.To_String (Lexical),
-                  Unbounded.To_String (Language),
+                 (Bytes (Lexical_First .. Lexical_Last),
+                  Bytes (Language_First .. Language_Last),
                   Direction);
             end if;
 
             if Has_Tag then
                return Terms.Language_Literal
-                 (Unbounded.To_String (Lexical),
-                  Unbounded.To_String (Language));
+                 (Bytes (Lexical_First .. Lexical_Last),
+                  Bytes (Language_First .. Language_Last));
             end if;
 
             return Terms.Literal
-              (Unbounded.To_String (Lexical),
-               IRIs.From_UTF_8 (Unbounded.To_String (Datatype)));
+              (Bytes (Lexical_First .. Lexical_Last),
+               IRIs.From_UTF_8 (Bytes (Datatype_First .. Datatype_Last)));
          end;
 
       elsif Tag = Tag_Triple then
          declare
-            Subject   : constant Terms.Term :=
+            Subject         : constant Terms.Term :=
               Get_Term (Bytes, Index, Depth + 1);
-            Predicate : Unbounded.Unbounded_String;
+            Predicate_First : Positive;
+            Predicate_Last  : Natural;
          begin
-            Get_Bytes (Bytes, Index, Predicate);
+            Get_Bytes (Bytes, Index, Predicate_First, Predicate_Last);
             declare
                Object : constant Terms.Term :=
                  Get_Term (Bytes, Index, Depth + 1);
             begin
                return Terms.Triple_Term
                  (Subject,
-                  IRIs.From_UTF_8 (Unbounded.To_String (Predicate)),
+                  IRIs.From_UTF_8
+                    (Bytes (Predicate_First .. Predicate_Last)),
                   Object);
             end;
          end;
@@ -371,20 +384,21 @@ package body Flyology_RDF.Codecs is
          end if;
 
          declare
-            Kind : constant Character := Bytes (Index);
-            Text : Unbounded.Unbounded_String;
+            Kind  : constant Character := Bytes (Index);
+            First : Positive;
+            Last  : Natural;
          begin
             Index := Index + 1;
             if Kind = Graph_Default then
                return Quads.Default_Graph;
             elsif Kind = Graph_IRI then
-               Get_Bytes (Bytes, Index, Text);
+               Get_Bytes (Bytes, Index, First, Last);
                return Quads.IRI_Graph
-                 (IRIs.From_UTF_8 (Unbounded.To_String (Text)));
+                 (IRIs.From_UTF_8 (Bytes (First .. Last)));
             elsif Kind = Graph_Blank then
-               Get_Bytes (Bytes, Index, Text);
+               Get_Bytes (Bytes, Index, First, Last);
                return Quads.Blank_Node_Graph
-                 (Terms.Blank_Node (Unbounded.To_String (Text)));
+                 (Terms.Blank_Node (Bytes (First .. Last)));
             end if;
          end;
 
@@ -398,11 +412,12 @@ package body Flyology_RDF.Codecs is
       --  declaration would propagate past the handler below and reach the
       --  caller untranslated.
       declare
-         Graph     : constant Quads.Graph_Name := Get_Graph;
-         Subject   : constant Terms.Term := Get_Term (Bytes, Index, 0);
-         Predicate : Unbounded.Unbounded_String;
+         Graph           : constant Quads.Graph_Name := Get_Graph;
+         Subject         : constant Terms.Term := Get_Term (Bytes, Index, 0);
+         Predicate_First : Positive;
+         Predicate_Last  : Natural;
       begin
-         Get_Bytes (Bytes, Index, Predicate);
+         Get_Bytes (Bytes, Index, Predicate_First, Predicate_Last);
 
          declare
             Object : constant Terms.Term := Get_Term (Bytes, Index, 0);
@@ -412,7 +427,7 @@ package body Flyology_RDF.Codecs is
             end if;
             return Quads.Create
               (Graph, Subject,
-               IRIs.From_UTF_8 (Unbounded.To_String (Predicate)),
+               IRIs.From_UTF_8 (Bytes (Predicate_First .. Predicate_Last)),
                Object);
          end;
       end;

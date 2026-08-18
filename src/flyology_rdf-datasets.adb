@@ -24,25 +24,29 @@ package body Flyology_RDF.Datasets is
       Value    : Quads.Quad;
       Inserted : out Boolean)
    is
-      Key : constant String := Statement_Key (Value);
+      --  Each map is asked once: the Insert that reports whether the key
+      --  was new replaces a Contains followed by an Insert, which would
+      --  search the same tree twice for every statement fed in.
+      Key      : constant String := Statement_Key (Value);
+      Position : Statement_Maps.Cursor;
    begin
-      if Into.Statements.Contains (Key) then
-         Inserted := False;
+      Into.Statements.Insert (Key, Value, Position, Inserted);
+      if not Inserted then
          return;
       end if;
-
-      Into.Statements.Insert (Key, Value);
-      Inserted := True;
 
       declare
          Graph : constant Quads.Graph_Name := Quads.Graph (Value);
          Name  : constant String := Graph_Key (Graph);
+         Count : Count_Maps.Cursor;
+         Fresh : Boolean;
       begin
-         if Into.Counts.Contains (Name) then
-            Into.Counts.Replace (Name, Into.Counts.Element (Name) + 1);
-         else
-            Into.Counts.Insert (Name, 1);
+         Into.Counts.Insert (Name, 1, Count, Fresh);
+         if Fresh then
             Into.Graphs.Insert (Name, Graph);
+         else
+            Into.Counts.Replace_Element
+              (Count, Count_Maps.Element (Count) + 1);
          end if;
       end;
    end Insert;

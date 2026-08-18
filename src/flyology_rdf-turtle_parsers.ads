@@ -1,7 +1,9 @@
+private with Ada.Containers.Indefinite_Holders;
 private with Ada.Containers.Indefinite_Vectors;
 private with Ada.Containers.Indefinite_Ordered_Maps;
 private with Ada.Containers.Indefinite_Ordered_Sets;
 private with Ada.Strings.Unbounded;
+private with Flyology_RDF.IRIs;
 private with Flyology_RDF.Lexers;
 
 with Flyology_RDF.Parser_Cursors;
@@ -261,6 +263,10 @@ private
    package Label_Sets is new Ada.Containers.Indefinite_Ordered_Sets
      (Element_Type => String);
 
+   package IRI_Holders is new Ada.Containers.Indefinite_Holders
+     (Element_Type => IRIs.IRI,
+      "="          => IRIs."=");
+
    type Parse_Diagnostic is record
       Code_Value       : Diagnostic_Code := Malformed_Syntax;
       Production_Value : Production_Kind := Document_Production;
@@ -271,7 +277,12 @@ private
    type Parser (Initialized : Boolean) is limited record
       Source_Data     : Unbounded.Unbounded_String;
       Blank_Prefix    : Unbounded.Unbounded_String;
-      Base_Data       : Unbounded.Unbounded_String;
+
+      --  The base, held as a parsed IRI from the moment it is set --
+      --  construction or a base directive -- so that resolving each
+      --  reference of the document does not re-validate it. Empty when no
+      --  base applies.
+      Base_Data       : IRI_Holders.Holder;
       Limits_Data     : Parse_Limits;
       Syntax_Data     : Syntax_Kind := TriG_Syntax;
       Checkpoint      : Work_Checkpoint_Access;
@@ -284,6 +295,15 @@ private
       --  Tokens retained because they are a partial statement.
       Statement       : Token_Vectors.Vector;
       Nesting         : Natural := 0;
+
+      --  A running view of Statement -- bracket depth and the leading
+      --  token kinds -- maintained as each token is appended, so deciding
+      --  whether the statement is complete does not re-walk every token
+      --  retained so far once per token scanned.
+      Statement_Depth : Integer := 0;
+      First_Kind      : Lexers.Token_Kind := Lexers.Dot_Token;
+      Second_Kind     : Lexers.Token_Kind := Lexers.Dot_Token;
+      First_Is_Terminated_Version : Boolean := False;
 
       Prefixes        : Prefix_Maps.Map;
       Current_Graph   : Unbounded.Unbounded_String;

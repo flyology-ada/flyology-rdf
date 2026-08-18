@@ -39,6 +39,17 @@ package body Flyology_RDF.NQuads_Writers is
    function Escape_Literal (Value : String) return String is
       Buffer : Unbounded.Unbounded_String;
    begin
+      --  Most lexical forms contain nothing to escape, and for those the
+      --  input is the output: one scan decides, and the character-by-
+      --  character rebuild below is paid only when it changes something.
+      if (for all Item of Value =>
+            Item not in '"' | '\'
+            and then Character'Pos (Item) >= 16#20#
+            and then Character'Pos (Item) /= 16#7F#)
+      then
+         return Value;
+      end if;
+
       for Item of Value loop
          case Item is
             when '"'      => Unbounded.Append (Buffer, "\""");
@@ -70,6 +81,16 @@ package body Flyology_RDF.NQuads_Writers is
    function Escape_IRI (Value : String) return String is
       Buffer : Unbounded.Unbounded_String;
    begin
+      --  An admitted IRI contains nothing this production forbids, so the
+      --  defensive rebuild below is almost never taken: one scan decides.
+      if (for all Item of Value =>
+            Character'Pos (Item) > 16#20#
+            and then Item not in '<' | '>' | '"' | '{' | '}' | '|'
+                               | '^' | '`' | '\')
+      then
+         return Value;
+      end if;
+
       for Item of Value loop
          declare
             Code : constant Natural := Character'Pos (Item);

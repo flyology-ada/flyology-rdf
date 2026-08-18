@@ -1,4 +1,3 @@
-with Flyology_RDF.IRIs;
 with Flyology_RDF.Terms;
 
 package body Flyology_RDF.Turtle_Parsers is
@@ -32,6 +31,21 @@ package body Flyology_RDF.Turtle_Parsers is
      "http://www.w3.org/1999/02/22-rdf-syntax-ns#nil";
    RDF_Reifies : constant String :=
      "http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies";
+
+   --  Parsed once at elaboration: these are fixed text, and the grammar
+   --  reaches for one of them at every literal, keyword "a", collection
+   --  cell and reifier, so validating the same bytes each time would be
+   --  pure repetition.
+   XSD_String_IRI  : constant IRIs.IRI := IRIs.From_UTF_8 (XSD_String);
+   XSD_Integer_IRI : constant IRIs.IRI := IRIs.From_UTF_8 (XSD_Integer);
+   XSD_Decimal_IRI : constant IRIs.IRI := IRIs.From_UTF_8 (XSD_Decimal);
+   XSD_Double_IRI  : constant IRIs.IRI := IRIs.From_UTF_8 (XSD_Double);
+   XSD_Boolean_IRI : constant IRIs.IRI := IRIs.From_UTF_8 (XSD_Boolean);
+   RDF_Type_IRI    : constant IRIs.IRI := IRIs.From_UTF_8 (RDF_Type);
+   RDF_First_IRI   : constant IRIs.IRI := IRIs.From_UTF_8 (RDF_First);
+   RDF_Rest_IRI    : constant IRIs.IRI := IRIs.From_UTF_8 (RDF_Rest);
+   RDF_Nil_IRI     : constant IRIs.IRI := IRIs.From_UTF_8 (RDF_Nil);
+   RDF_Reifies_IRI : constant IRIs.IRI := IRIs.From_UTF_8 (RDF_Reifies);
 
    --  Raised internally to abandon a statement; every raise site records the
    --  diagnostic first, so the handler only has to deliver it.
@@ -87,7 +101,10 @@ package body Flyology_RDF.Turtle_Parsers is
          Result.Source_Data := Unbounded.To_Unbounded_String (Source_Name);
          Result.Blank_Prefix :=
            Unbounded.To_Unbounded_String (Blank_Node_Prefix);
-         Result.Base_Data := Unbounded.To_Unbounded_String (Base_IRI);
+         if Base_IRI /= "" then
+            Result.Base_Data := IRI_Holders.To_Holder
+              (IRIs.From_UTF_8 (Base_IRI));
+         end if;
          Result.Limits_Data := Limits;
          Result.Syntax_Data := Syntax;
          Result.Checkpoint := Work_Checkpoint;
@@ -119,7 +136,10 @@ package body Flyology_RDF.Turtle_Parsers is
 
       function At_End return Boolean is (Next > Tokens.Last_Index);
 
-      function Current return Lexers.Token
+      --  A view of the current token rather than a copy of it: every
+      --  grammar routine below reads it several times, and a token carries
+      --  its decoded text.
+      function Current return Token_Vectors.Constant_Reference_Type
       is (Tokens (if At_End then Tokens.Last_Index else Next));
 
       procedure Reject
@@ -231,7 +251,7 @@ package body Flyology_RDF.Turtle_Parsers is
         return IRIs.IRI is
       begin
          if Is_Line_Based (Into.Syntax_Data)
-           or else Unbounded.Length (Into.Base_Data) = 0
+           or else Into.Base_Data.Is_Empty
          then
             if not IRIs.Is_Valid (Reference) then
                Reject (Invalid_IRI, What);
@@ -239,9 +259,7 @@ package body Flyology_RDF.Turtle_Parsers is
             return IRIs.From_UTF_8 (Reference);
          end if;
 
-         return IRIs.Resolve
-           (IRIs.From_UTF_8 (Unbounded.To_String (Into.Base_Data)),
-            Reference);
+         return IRIs.Resolve (Into.Base_Data.Element, Reference);
       exception
          when IRIs.Invalid_IRI | IRIs.Invalid_UTF_8 =>
             Reject (Invalid_IRI, What);
@@ -303,7 +321,7 @@ package body Flyology_RDF.Turtle_Parsers is
       function Parse_Collection return Terms.Term;
 
       function Parse_Collection return Terms.Term is
-         Head    : Terms.Term := Terms.IRI_Term (IRIs.From_UTF_8 (RDF_Nil));
+         Head    : Terms.Term := Terms.IRI_Term (RDF_Nil_IRI);
          Started : Boolean := False;
          Last    : Terms.Term := Head;
          Where   : constant Source_Span := Token_Span (Current);
@@ -319,9 +337,9 @@ package body Flyology_RDF.Turtle_Parsers is
                  Terms.Blank_Node (Fresh_Blank_Label);
                Element : constant Terms.Term := Parse_Object_Term;
             begin
-               Emit (Cell, IRIs.From_UTF_8 (RDF_First), Element, Where);
+               Emit (Cell, RDF_First_IRI, Element, Where);
                if Started then
-                  Emit (Last, IRIs.From_UTF_8 (RDF_Rest), Cell, Where);
+                  Emit (Last, RDF_Rest_IRI, Cell, Where);
                else
                   Head := Cell;
                   Started := True;
@@ -334,8 +352,8 @@ package body Flyology_RDF.Turtle_Parsers is
          Depth := Depth - 1;
 
          if Started then
-            Emit (Last, IRIs.From_UTF_8 (RDF_Rest),
-                  Terms.IRI_Term (IRIs.From_UTF_8 (RDF_Nil)), Where);
+            Emit (Last, RDF_Rest_IRI,
+                  Terms.IRI_Term (RDF_Nil_IRI), Where);
          end if;
          return Head;
       end Parse_Collection;
@@ -364,7 +382,7 @@ package body Flyology_RDF.Turtle_Parsers is
          case Peek_Kind is
             when Lexers.A_Token =>
                Advance;
-               return IRIs.From_UTF_8 (RDF_Type);
+               return RDF_Type_IRI;
             when Lexers.IRI_Reference_Token =>
                declare
                   Value : constant IRIs.IRI :=
@@ -391,7 +409,7 @@ package body Flyology_RDF.Turtle_Parsers is
 
       function Parse_Triple_Term return Terms.Term is
          Subject   : Terms.Term := Terms.Blank_Node ("placeholder");
-         Predicate : IRIs.IRI := IRIs.From_UTF_8 (RDF_Type);
+         Predicate : IRIs.IRI := RDF_Type_IRI;
          Object    : Terms.Term := Terms.Blank_Node ("placeholder");
       begin
          Enter_Nesting;
@@ -482,7 +500,7 @@ package body Flyology_RDF.Turtle_Parsers is
       function Parse_Reified_Triple return Terms.Term is
          Where     : constant Source_Span := Token_Span (Current);
          Subject   : Terms.Term := Terms.Blank_Node ("placeholder");
-         Predicate : IRIs.IRI := IRIs.From_UTF_8 (RDF_Type);
+         Predicate : IRIs.IRI := RDF_Type_IRI;
          Object    : Terms.Term := Terms.Blank_Node ("placeholder");
          Node      : Terms.Term := Terms.Blank_Node ("placeholder");
       begin
@@ -554,7 +572,7 @@ package body Flyology_RDF.Turtle_Parsers is
          Expect (Lexers.Close_Quoted_Token, Statement_Production);
          Depth := Depth - 1;
 
-         Emit (Node, IRIs.From_UTF_8 (RDF_Reifies),
+         Emit (Node, RDF_Reifies_IRI,
                Terms.Triple_Term (Subject, Predicate, Object), Where);
          return Node;
       exception
@@ -572,19 +590,19 @@ package body Flyology_RDF.Turtle_Parsers is
             when Lexers.Integer_Token =>
                Advance;
                return Terms.Literal
-                 (Lexers.Text (Value), IRIs.From_UTF_8 (XSD_Integer));
+                 (Lexers.Text (Value), XSD_Integer_IRI);
             when Lexers.Decimal_Token =>
                Advance;
                return Terms.Literal
-                 (Lexers.Text (Value), IRIs.From_UTF_8 (XSD_Decimal));
+                 (Lexers.Text (Value), XSD_Decimal_IRI);
             when Lexers.Double_Token =>
                Advance;
                return Terms.Literal
-                 (Lexers.Text (Value), IRIs.From_UTF_8 (XSD_Double));
+                 (Lexers.Text (Value), XSD_Double_IRI);
             when Lexers.Boolean_Token =>
                Advance;
                return Terms.Literal
-                 (Lexers.Text (Value), IRIs.From_UTF_8 (XSD_Boolean));
+                 (Lexers.Text (Value), XSD_Boolean_IRI);
             when Lexers.String_Token =>
                Advance;
                --  A language tag, a datatype, or neither.
@@ -629,7 +647,7 @@ package body Flyology_RDF.Turtle_Parsers is
                   end case;
                end if;
                return Terms.Literal
-                 (Lexers.Text (Value), IRIs.From_UTF_8 (XSD_String));
+                 (Lexers.Text (Value), XSD_String_IRI);
             when others =>
                Reject (Malformed_Syntax, Literal_Production);
          end case;
@@ -745,7 +763,7 @@ package body Flyology_RDF.Turtle_Parsers is
                   Node := Terms.Blank_Node (Fresh_Blank_Label);
                end if;
 
-               Emit (Node, IRIs.From_UTF_8 (RDF_Reifies),
+               Emit (Node, RDF_Reifies_IRI,
                      Terms.Triple_Term (Subject, Predicate, Object), Where);
 
                if Peek_Kind = Lexers.Open_Annotation_Token then
@@ -865,8 +883,7 @@ package body Flyology_RDF.Turtle_Parsers is
                        Resolve (Lexers.Text (Current), Directive_Production);
                   begin
                      Advance;
-                     Into.Base_Data := Unbounded.To_Unbounded_String
-                       (IRIs.To_UTF_8 (Target_IRI));
+                     Into.Base_Data := IRI_Holders.To_Holder (Target_IRI);
                   end;
                   if Terminated then
                      Expect (Lexers.Dot_Token, Directive_Production);
@@ -1263,91 +1280,105 @@ package body Flyology_RDF.Turtle_Parsers is
    --  A statement is complete at a '.' outside every bracket, at the brace
    --  that closes a graph block, or at the operand that ends a
    --  SPARQL-style directive, which carries no terminator of its own.
-   function Statement_Is_Complete
-     (Tokens : Token_Vectors.Vector) return Boolean;
+   --
+   --  Called once per token as it is appended to the retained statement,
+   --  and maintains the parser's running view of that statement -- its
+   --  bracket depth and its leading token kinds -- so the decision is made
+   --  from the newest token alone. Whenever it reports completion the
+   --  statement is parsed and cleared, so a condition that holds is acted
+   --  on at the first token that establishes it, exactly as a re-walk of
+   --  the whole statement would have found it.
+   procedure Note_Statement_Token
+     (Into     : in out Parser;
+      Value    : Lexers.Token;
+      Complete : out Boolean);
 
-   function Statement_Is_Complete
-     (Tokens : Token_Vectors.Vector) return Boolean
+   procedure Note_Statement_Token
+     (Into     : in out Parser;
+      Value    : Lexers.Token;
+      Complete : out Boolean)
    is
-      Depth : Integer := 0;
+      Kind   : constant Lexers.Token_Kind := Lexers.Kind (Value);
+      Length : constant Natural := Natural (Into.Statement.Length);
    begin
-      if Tokens.Is_Empty then
-         return False;
+      Complete := False;
+
+      if Length = 1 then
+         Into.First_Kind := Kind;
+         Into.Second_Kind := Lexers.Dot_Token;
+         Into.Statement_Depth := 0;
+         --  The at-form carries a terminator; the keyword form does not.
+         Into.First_Is_Terminated_Version :=
+           Kind = Lexers.Version_Directive_Token
+           and then Lexers.Text (Value) = "@version";
+      elsif Length = 2 then
+         Into.Second_Kind := Kind;
       end if;
 
       --  TriG names a graph either with the GRAPH keyword or by writing
       --  the label directly before the brace. The second form has to be
       --  recognised here or the brace never ends a statement and the dot
       --  inside the block ends it instead.
-      if Natural (Tokens.Length) >= 2
-        and then Lexers.Kind (Tokens.First_Element)
-                 in Lexers.IRI_Reference_Token
-                  | Lexers.Prefixed_Name_Token
-                  | Lexers.Blank_Label_Token
-        and then Lexers.Kind (Tokens (Tokens.First_Index + 1))
-                 = Lexers.Open_Brace_Token
+      if Length = 2
+        and then Into.First_Kind in Lexers.IRI_Reference_Token
+                                  | Lexers.Prefixed_Name_Token
+                                  | Lexers.Blank_Label_Token
+        and then Kind = Lexers.Open_Brace_Token
       then
-         return True;
+         Complete := True;
+         return;
       end if;
 
       --  The same, with an anonymous node: "[] { ... }".
-      if Natural (Tokens.Length) >= 3
-        and then Lexers.Kind (Tokens.First_Element)
-                 = Lexers.Open_Bracket_Token
-        and then Lexers.Kind (Tokens (Tokens.First_Index + 1))
-                 = Lexers.Close_Bracket_Token
-        and then Lexers.Kind (Tokens (Tokens.First_Index + 2))
-                 = Lexers.Open_Brace_Token
+      if Length = 3
+        and then Into.First_Kind = Lexers.Open_Bracket_Token
+        and then Into.Second_Kind = Lexers.Close_Bracket_Token
+        and then Kind = Lexers.Open_Brace_Token
       then
-         return True;
+         Complete := True;
+         return;
       end if;
 
-      case Lexers.Kind (Tokens.First_Element) is
+      case Into.First_Kind is
          when Lexers.Sparql_Prefix_Token =>
-            return Natural (Tokens.Length) = 3;
+            Complete := Length = 3;
+            return;
          when Lexers.Sparql_Base_Token =>
-            return Natural (Tokens.Length) = 2;
+            Complete := Length = 2;
+            return;
          when Lexers.Version_Directive_Token =>
-            --  The at-form carries a terminator; the keyword form does not.
-            if Lexers.Text (Tokens.First_Element) = "@version" then
-               return Natural (Tokens.Length) = 3;
-            end if;
-            return Natural (Tokens.Length) = 2;
+            Complete :=
+              Length = (if Into.First_Is_Terminated_Version then 3 else 2);
+            return;
          when Lexers.Open_Brace_Token | Lexers.Close_Brace_Token =>
-            return True;
+            Complete := True;
+            return;
          when Lexers.Graph_Token =>
-            return Lexers.Kind (Tokens.Last_Element)
-                   = Lexers.Open_Brace_Token;
+            Complete := Kind = Lexers.Open_Brace_Token;
+            return;
          when others =>
             null;
       end case;
 
-      for Value of Tokens loop
-         case Lexers.Kind (Value) is
-            when Lexers.Open_Paren_Token | Lexers.Open_Bracket_Token
-               | Lexers.Open_Quoted_Token | Lexers.Open_Triple_Term_Token
-               | Lexers.Open_Annotation_Token =>
-               Depth := Depth + 1;
-            when Lexers.Close_Paren_Token | Lexers.Close_Bracket_Token
-               | Lexers.Close_Quoted_Token | Lexers.Close_Triple_Term_Token
-               | Lexers.Close_Annotation_Token =>
-               Depth := Depth - 1;
-            when Lexers.Dot_Token =>
-               if Depth <= 0 then
-                  return True;
-               end if;
-            when Lexers.Close_Brace_Token =>
-               --  TriG lets the last statement in a graph block omit its
-               --  terminator, so the closing brace ends the statement too.
-               if Depth <= 0 then
-                  return True;
-               end if;
-            when others =>
-               null;
-         end case;
-      end loop;
-      return False;
-   end Statement_Is_Complete;
+      case Kind is
+         when Lexers.Open_Paren_Token | Lexers.Open_Bracket_Token
+            | Lexers.Open_Quoted_Token | Lexers.Open_Triple_Term_Token
+            | Lexers.Open_Annotation_Token =>
+            Into.Statement_Depth := Into.Statement_Depth + 1;
+         when Lexers.Close_Paren_Token | Lexers.Close_Bracket_Token
+            | Lexers.Close_Quoted_Token | Lexers.Close_Triple_Term_Token
+            | Lexers.Close_Annotation_Token =>
+            Into.Statement_Depth := Into.Statement_Depth - 1;
+         when Lexers.Dot_Token =>
+            Complete := Into.Statement_Depth <= 0;
+         when Lexers.Close_Brace_Token =>
+            --  TriG lets the last statement in a graph block omit its
+            --  terminator, so the closing brace ends the statement too.
+            Complete := Into.Statement_Depth <= 0;
+         when others =>
+            null;
+      end case;
+   end Note_Statement_Token;
 
    procedure Deliver
      (Into   : in out Parser;
@@ -1418,20 +1449,25 @@ package body Flyology_RDF.Turtle_Parsers is
                  Natural'Max (Into.Work_Data.Maximum_Pending_Tokens,
                               Natural (Into.Statement.Length));
 
-               if Statement_Is_Complete (Into.Statement) then
-                  declare
-                     Failure : Parse_Diagnostic;
-                     Bad     : Boolean;
-                  begin
-                     Parse_Statement (Into, Target, Failure, Bad);
-                     Into.Statement.Clear;
-                     if Bad then
-                        Into.Failed := True;
-                        On_Diagnostic (Target, Failure);
-                        exit;
-                     end if;
-                  end;
-               end if;
+               declare
+                  Complete : Boolean;
+               begin
+                  Note_Statement_Token (Into, Result, Complete);
+                  if Complete then
+                     declare
+                        Failure : Parse_Diagnostic;
+                        Bad     : Boolean;
+                     begin
+                        Parse_Statement (Into, Target, Failure, Bad);
+                        Into.Statement.Clear;
+                        if Bad then
+                           Into.Failed := True;
+                           On_Diagnostic (Target, Failure);
+                           exit;
+                        end if;
+                     end;
+                  end if;
+               end;
 
             when Lexers.Needs_More_Input =>
                if Ended then

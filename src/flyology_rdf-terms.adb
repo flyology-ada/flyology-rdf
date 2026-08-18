@@ -13,11 +13,21 @@ package body Flyology_RDF.Terms is
    XSD_String : constant String :=
      "http://www.w3.org/2001/XMLSchema#string";
 
+   --  Parsed once at elaboration: these are fixed text, and every literal
+   --  constructed asks for one of them, so validating the same bytes per
+   --  literal would be pure repetition.
+   Cached_String_Datatype : constant IRIs.IRI :=
+     IRIs.From_UTF_8 (XSD_String);
+   Cached_Language_String_Datatype : constant IRIs.IRI :=
+     IRIs.From_UTF_8 (RDF_Lang_String);
+   Cached_Directional_Datatype : constant IRIs.IRI :=
+     IRIs.From_UTF_8 (RDF_Dir_Lang_String);
+
    function String_Datatype return IRIs.IRI is
-     (IRIs.From_UTF_8 (XSD_String));
+     (Cached_String_Datatype);
 
    function Language_String_Datatype return IRIs.IRI is
-     (IRIs.From_UTF_8 (RDF_Lang_String));
+     (Cached_Language_String_Datatype);
 
    --  BCP 47 shape, checked structurally rather than against the registry:
    --  non-empty alphanumeric subtags separated by single hyphens, the first
@@ -222,7 +232,7 @@ package body Flyology_RDF.Terms is
       --  rdf:dirLangString datatype, not rdf:langString.
       return Build_Literal
         (Lexical_Form  => Lexical_Form,
-         Datatype      => IRIs.From_UTF_8 (RDF_Dir_Lang_String),
+         Datatype      => Cached_Directional_Datatype,
          Has_Language  => True,
          Language      => Ada.Characters.Handling.To_Lower (Language),
          Has_Direction => True,

@@ -350,6 +350,21 @@ package body Flyology_RDF.Lexers is
       procedure Scan_IRI_Reference;
 
       procedure Scan_IRI_Reference is
+         --  Bytes between escapes join the token verbatim: the scan
+         --  validates each scalar as canonical UTF-8, and a canonical
+         --  scalar re-encodes to exactly its source bytes, so a whole run
+         --  is appended as one slice rather than one scalar at a time.
+         Run_Start : Positive := Walk_Index;
+
+         procedure Flush_Run;
+
+         procedure Flush_Run is
+         begin
+            if Walk_Index > Run_Start then
+               Unbounded.Append
+                 (Buffer, Text (Run_Start .. Walk_Index - 1));
+            end if;
+         end Flush_Run;
       begin
          --  The opening '<' is consumed by the caller.
          loop
@@ -359,10 +374,12 @@ package body Flyology_RDF.Lexers is
             end if;
 
             if Scalar = 16#3E# then           --  '>'
+               Flush_Run;
                Step (Scalar, Length);
                Emit (IRI_Reference_Token);
                return;
             elsif Scalar = 16#5C# then        --  '\'
+               Flush_Run;
                Step (Scalar, Length);
                Peek (Text, Walk_Index, Scalar, Length, Look);
                if Halt_On (Look) then
@@ -383,11 +400,11 @@ package body Flyology_RDF.Lexers is
                elsif Status = Needs_More_Input then
                   return;
                end if;
+               Run_Start := Walk_Index;
             elsif Is_Forbidden_In_IRI_Reference (Scalar) then
                Fail (Forbidden_Character);
                return;
             else
-               Append_Scalar (Buffer, Scalar);
                Step (Scalar, Length);
             end if;
          end loop;
@@ -397,6 +414,20 @@ package body Flyology_RDF.Lexers is
 
       procedure Scan_String (Quote : Scalar_Value) is
          Long : Boolean := False;
+
+         --  Bytes between escapes join the token verbatim, exactly as in
+         --  Scan_IRI_Reference above, and for the same reason.
+         Run_Start : Positive := Walk_Index;
+
+         procedure Flush_Run;
+
+         procedure Flush_Run is
+         begin
+            if Walk_Index > Run_Start then
+               Unbounded.Append
+                 (Buffer, Text (Run_Start .. Walk_Index - 1));
+            end if;
+         end Flush_Run;
       begin
          --  One quote is already consumed. Two more make it a long form;
          --  exactly two in total is the empty short string.
@@ -433,6 +464,7 @@ package body Flyology_RDF.Lexers is
          end if;
 
          Result.Form_Value := (if Long then Long_Quoted else Short_Quoted);
+         Run_Start := Walk_Index;
 
          loop
             Peek (Text, Walk_Index, Scalar, Length, Look);
@@ -441,6 +473,7 @@ package body Flyology_RDF.Lexers is
             end if;
 
             if Scalar = Quote then
+               Flush_Run;
                if not Long then
                   Step (Scalar, Length);
                   Emit (String_Token);
@@ -481,8 +514,10 @@ package body Flyology_RDF.Lexers is
                      Append_Scalar (Buffer, Quote);
                      Step (Quote, 1);
                   end loop;
+                  Run_Start := Walk_Index;
                end;
             elsif Scalar = 16#5C# then        --  '\'
+               Flush_Run;
                Step (Scalar, Length);
                Peek (Text, Walk_Index, Scalar, Length, Look);
                if Halt_On (Look) then
@@ -527,6 +562,7 @@ package body Flyology_RDF.Lexers is
                      Fail (Malformed_Escape);
                      return;
                end case;
+               Run_Start := Walk_Index;
             elsif not Long
               and then Cursors.Is_Line_Break (Scalar)
             then
@@ -534,7 +570,6 @@ package body Flyology_RDF.Lexers is
                Fail (Unexpected_Character);
                return;
             else
-               Append_Scalar (Buffer, Scalar);
                Step (Scalar, Length);
             end if;
          end loop;
@@ -551,8 +586,15 @@ package body Flyology_RDF.Lexers is
       procedure Scan_Local_Name (Blank_Label : Boolean := False) is
          Good_Position : Cursors.Cursor_State := Walk_Position;
          Good_Index    : Positive := Walk_Index;
-         Good_Length   : Natural := Unbounded.Length (Buffer);
          First         : Boolean := True;
+
+         --  Bytes between reserved-character escapes join the token
+         --  verbatim, exactly as in Scan_IRI_Reference above. Percent
+         --  escapes are carried through as written, so they stay inside
+         --  the run; only a backslash escape rewrites its bytes. The run
+         --  is cut at the last legal ending rather than the last byte
+         --  consumed, which is what discards a trailing dot.
+         Run_Start : Positive := Walk_Index;
       begin
          loop
             Peek_Token_End (Walk_Index, Scalar, Length, Look);
@@ -609,9 +651,6 @@ package body Flyology_RDF.Lexers is
                      return;
                   end if;
                   Step (Low, Ignored_Length);
-                  Append_Scalar (Buffer, 16#25#);
-                  Append_Scalar (Buffer, High);
-                  Append_Scalar (Buffer, Low);
                end;
             elsif Scalar = 16#5C#             --  reserved-character escape
               and then not Blank_Label
@@ -621,6 +660,10 @@ package body Flyology_RDF.Lexers is
                   Escaped_Length : Natural;
                   Inner          : Peek_Status;
                begin
+                  if Walk_Index > Run_Start then
+                     Unbounded.Append
+                       (Buffer, Text (Run_Start .. Walk_Index - 1));
+                  end if;
                   Step (Scalar, Length);
                   Peek (Text, Walk_Index, Escaped, Escaped_Length, Inner);
                   if Inner /= Available then
@@ -636,6 +679,7 @@ package body Flyology_RDF.Lexers is
                   end if;
                   Append_Scalar (Buffer, Escaped);
                   Step (Escaped, Escaped_Length);
+                  Run_Start := Walk_Index;
                end;
             elsif (if First
                    then --  A name may not open with a hyphen or a
@@ -648,7 +692,6 @@ package body Flyology_RDF.Lexers is
                         or else (Scalar = 16#3A#
                                  and then not Blank_Label))
             then
-               Append_Scalar (Buffer, Scalar);
                Step (Scalar, Length);
             elsif Scalar = 16#2E# then        --  '.' only if not final
                --  Nor may a dot open the name: the run so far is complete
@@ -656,7 +699,6 @@ package body Flyology_RDF.Lexers is
                if First then
                   exit;
                end if;
-               Append_Scalar (Buffer, Scalar);
                Step (Scalar, Length);
                First := False;
                goto Continue;
@@ -668,7 +710,6 @@ package body Flyology_RDF.Lexers is
             --  end the name.
             Good_Position := Walk_Position;
             Good_Index := Walk_Index;
-            Good_Length := Unbounded.Length (Buffer);
             First := False;
 
             <<Continue>>
@@ -676,7 +717,9 @@ package body Flyology_RDF.Lexers is
 
          Walk_Position := Good_Position;
          Walk_Index := Good_Index;
-         Unbounded.Head (Buffer, Good_Length);
+         if Good_Index > Run_Start then
+            Unbounded.Append (Buffer, Text (Run_Start .. Good_Index - 1));
+         end if;
          Emit (Prefixed_Name_Token);
       end Scan_Local_Name;
 

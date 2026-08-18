@@ -248,11 +248,20 @@ package body Flyology_RDF.Canonicalization is
       Maximum_Work : Positive := Default_Maximum_Work;
       Algorithm    : Hash_Algorithm := SHA_256)
    is
-      All_Quads   : Quad_Vectors.Vector;
       Blank_Quads : Quad_Lists.Map;
       Blanks      : String_Sets.Set;
       Canonical   : Issuer := New_Issuer ("c14n");
       Work        : Natural := 0;
+
+      --  A node's first-degree hash depends only on its bucket, which is
+      --  fixed once the dataset has been read, so it is computed once per
+      --  label and remembered. The gather-and-permute phase asks for these
+      --  hashes once per related node per path tried, which on a dataset
+      --  of look-alike nodes is quadratic at best; recomputing the digest
+      --  each time made every one of those asks a serialization. The work
+      --  bound is still charged per ask, so what a bounded run can reach
+      --  is unchanged.
+      First_Degree_Cache : String_Maps.Map;
 
       procedure Spend (Amount : Positive := 1);
 
@@ -269,18 +278,20 @@ package body Flyology_RDF.Canonicalization is
       procedure Note (Statement : Quads.Quad) is
          Mentioned : String_Sets.Set;
       begin
-         All_Quads.Append (Statement);
          Collect_Labels (Statement, Mentioned);
          for Label of Mentioned loop
             Blanks.Include (Label);
             if not Blank_Quads.Contains (Label) then
                Blank_Quads.Insert (Label, Quad_Vectors.Empty_Vector);
             end if;
+            --  Appended through a reference: reading the bucket out and
+            --  writing it back would copy every statement already in it,
+            --  making a node's bucket quadratic in the number of
+            --  statements that mention it.
             declare
-               Bucket : Quad_Vectors.Vector := Blank_Quads.Element (Label);
+               Bucket : Quad_Vectors.Vector renames Blank_Quads (Label);
             begin
                Bucket.Append (Statement);
-               Blank_Quads.Replace (Label, Bucket);
             end;
          end loop;
       end Note;
@@ -316,11 +327,14 @@ package body Flyology_RDF.Canonicalization is
 
       begin
          Spend;
+         if First_Degree_Cache.Contains (Label) then
+            return First_Degree_Cache.Element (Label);
+         end if;
          if not Blank_Quads.Contains (Label) then
             return Digests.Digest ("", Algorithm);
          end if;
 
-         for Statement of Blank_Quads.Element (Label) loop
+         for Statement of Blank_Quads (Label) loop
             declare
                Graph : constant Quads.Graph_Name := Quads.Graph (Statement);
                Copy  : constant Quads.Quad :=
@@ -367,7 +381,11 @@ package body Flyology_RDF.Canonicalization is
          end;
          pragma Unreferenced (Sorted);
 
-         return Digests.Digest (Unbounded.To_String (Buffer), Algorithm);
+         return Result : constant String :=
+           Digests.Digest (Unbounded.To_String (Buffer), Algorithm)
+         do
+            First_Degree_Cache.Insert (Label, Result);
+         end return;
       end Hash_First_Degree;
 
       function Hash_N_Degree
@@ -433,11 +451,10 @@ package body Flyology_RDF.Canonicalization is
                            Groups.Insert (Key, String_Vectors.Empty_Vector);
                         end if;
                         declare
-                           Bucket : String_Vectors.Vector :=
-                             Groups.Element (Key);
+                           Bucket : String_Vectors.Vector renames
+                             Groups (Key);
                         begin
                            Bucket.Append (Terms.Label (Value));
-                           Groups.Replace (Key, Bucket);
                         end;
                      end;
                   end if;
@@ -455,7 +472,7 @@ package body Flyology_RDF.Canonicalization is
          Spend;
 
          if Blank_Quads.Contains (Label) then
-            for Statement of Blank_Quads.Element (Label) loop
+            for Statement of Blank_Quads (Label) loop
                Add_Related (Quads.Subject (Statement), Statement, 's');
                Add_Related (Quads.Object (Statement), Statement, 'o');
                declare
@@ -475,8 +492,73 @@ package body Flyology_RDF.Canonicalization is
                Members      : String_Vectors.Vector :=
                  Group_Maps.Element (Position);
                Chosen_Path  : Unbounded.Unbounded_String;
-               Chosen       : Issuer := Temp;
+               Chosen       : Issuer;
                Have_Chosen  : Boolean := False;
+
+               procedure Follow
+                 (Working   : in out Issuer;
+                  Path      : out Unbounded.Unbounded_String;
+                  Abandoned : out Boolean);
+
+               --  One arrangement of the group: issue along Members in
+               --  their current order, recursing into any node not yet
+               --  named.
+               procedure Follow
+                 (Working   : in out Issuer;
+                  Path      : out Unbounded.Unbounded_String;
+                  Abandoned : out Boolean)
+               is
+                  Recurse : String_Vectors.Vector;
+               begin
+                  Path := Unbounded.Null_Unbounded_String;
+                  Abandoned := False;
+
+                  for Related of Members loop
+                     if Has_Issued (Canonical, Related) then
+                        Unbounded.Append
+                          (Path,
+                           "_:" & Issued_For (Canonical, Related));
+                     else
+                        if not Has_Issued (Working, Related) then
+                           Recurse.Append (Related);
+                        end if;
+                        Unbounded.Append
+                          (Path, "_:" & Issue (Working, Related));
+                     end if;
+
+                     --  A path already worse than the best one cannot
+                     --  become better, so stop extending it.
+                     if Have_Chosen
+                       and then Unbounded.Length (Path)
+                                >= Unbounded.Length (Chosen_Path)
+                       and then Path > Chosen_Path
+                     then
+                        Abandoned := True;
+                        return;
+                     end if;
+                  end loop;
+
+                  for Related of Recurse loop
+                     declare
+                        Result : constant String :=
+                          Hash_N_Degree (Related, Working);
+                     begin
+                        Unbounded.Append
+                          (Path, "_:" & Issue (Working, Related));
+                        Unbounded.Append (Path, "<" & Result & ">");
+                     end;
+
+                     if Have_Chosen
+                       and then Unbounded.Length (Path)
+                                >= Unbounded.Length (Chosen_Path)
+                       and then Path > Chosen_Path
+                     then
+                        Abandoned := True;
+                        return;
+                     end if;
+                  end loop;
+               end Follow;
+
             begin
                Unbounded.Append (Buffer, Related_Hash);
 
@@ -503,75 +585,49 @@ package body Flyology_RDF.Canonicalization is
                   Members := Ordered;
                end;
 
-               loop
-                  Spend;
+               if Natural (Members.Length) = 1 then
+                  --  A single member admits a single arrangement, which is
+                  --  therefore the chosen one: it can issue into the
+                  --  caller's issuer directly rather than fork a copy only
+                  --  to copy it back. Most groups are like this -- related
+                  --  nodes land in one group only when their hashes tie --
+                  --  and the recursion repeats this per level, so the
+                  --  copies this avoids grow with the square of the
+                  --  look-alike region rather than staying a constant.
                   declare
-                     Working   : Issuer := Temp;
                      Path      : Unbounded.Unbounded_String;
-                     Recurse   : String_Vectors.Vector;
-                     Abandoned : Boolean := False;
+                     Abandoned : Boolean;
                   begin
-                     for Related of Members loop
-                        if Has_Issued (Canonical, Related) then
-                           Unbounded.Append
-                             (Path,
-                              "_:" & Issued_For (Canonical, Related));
-                        else
-                           if not Has_Issued (Working, Related) then
-                              Recurse.Append (Related);
-                           end if;
-                           Unbounded.Append
-                             (Path, "_:" & Issue (Working, Related));
-                        end if;
-
-                        --  A path already worse than the best one cannot
-                        --  become better, so stop extending it.
-                        if Have_Chosen
-                          and then Unbounded.Length (Path)
-                                   >= Unbounded.Length (Chosen_Path)
-                          and then Path > Chosen_Path
-                        then
-                           Abandoned := True;
-                           exit;
-                        end if;
-                     end loop;
-
-                     if not Abandoned then
-                        for Related of Recurse loop
-                           declare
-                              Result : constant String :=
-                                Hash_N_Degree (Related, Working);
-                           begin
-                              Unbounded.Append
-                                (Path, "_:" & Issue (Working, Related));
-                              Unbounded.Append (Path, "<" & Result & ">");
-                           end;
-
-                           if Have_Chosen
-                             and then Unbounded.Length (Path)
-                                      >= Unbounded.Length (Chosen_Path)
-                             and then Path > Chosen_Path
-                           then
-                              Abandoned := True;
-                              exit;
-                           end if;
-                        end loop;
-                     end if;
-
-                     if not Abandoned
-                       and then (not Have_Chosen or else Path < Chosen_Path)
-                     then
-                        Chosen_Path := Path;
-                        Chosen := Working;
-                        Have_Chosen := True;
-                     end if;
+                     Spend;
+                     Follow (Temp, Path, Abandoned);
+                     Unbounded.Append (Buffer, Unbounded.To_String (Path));
                   end;
+               else
+                  loop
+                     Spend;
+                     declare
+                        Working   : Issuer := Temp;
+                        Path      : Unbounded.Unbounded_String;
+                        Abandoned : Boolean;
+                     begin
+                        Follow (Working, Path, Abandoned);
+                        if not Abandoned
+                          and then (not Have_Chosen
+                                    or else Path < Chosen_Path)
+                        then
+                           Chosen_Path := Path;
+                           Chosen := Working;
+                           Have_Chosen := True;
+                        end if;
+                     end;
 
-                  exit when not Next_Permutation (Members);
-               end loop;
+                     exit when not Next_Permutation (Members);
+                  end loop;
 
-               Unbounded.Append (Buffer, Unbounded.To_String (Chosen_Path));
-               Temp := Chosen;
+                  Unbounded.Append
+                    (Buffer, Unbounded.To_String (Chosen_Path));
+                  Temp := Chosen;
+               end if;
             end;
          end loop;
 
@@ -607,10 +663,9 @@ package body Flyology_RDF.Canonicalization is
                      Groups.Insert (Key, String_Vectors.Empty_Vector);
                   end if;
                   declare
-                     Bucket : String_Vectors.Vector := Groups.Element (Key);
+                     Bucket : String_Vectors.Vector renames Groups (Key);
                   begin
                      Bucket.Append (Label);
-                     Groups.Replace (Key, Bucket);
                   end;
                end;
             end loop;
@@ -651,10 +706,9 @@ package body Flyology_RDF.Canonicalization is
                   Groups.Insert (Key, String_Vectors.Empty_Vector);
                end if;
                declare
-                  Bucket : String_Vectors.Vector := Groups.Element (Key);
+                  Bucket : String_Vectors.Vector renames Groups (Key);
                begin
                   Bucket.Append (Label);
-                  Groups.Replace (Key, Bucket);
                end;
             end;
          end loop;
@@ -685,13 +739,12 @@ package body Flyology_RDF.Canonicalization is
                               Results.Insert (Digest, Key);
                            else
                               declare
-                                 Existing : String_Vectors.Vector :=
-                                   Results.Element (Digest);
+                                 Existing : String_Vectors.Vector renames
+                                   Results (Digest);
                               begin
                                  for Item of Key loop
                                     Existing.Append (Item);
                                  end loop;
-                                 Results.Replace (Digest, Existing);
                               end;
                            end if;
                         end;
@@ -717,6 +770,26 @@ package body Flyology_RDF.Canonicalization is
       declare
          Mapping : String_Maps.Map;
          Lines   : String_Sets.Set;
+
+         procedure Emit_Statement (Statement : Quads.Quad);
+
+         procedure Emit_Statement (Statement : Quads.Quad) is
+         begin
+            --  A dataset with no relabelled nodes -- no blank nodes at all,
+            --  most commonly -- serializes as it stands, so nothing is
+            --  gained by rebuilding each statement through the identity
+            --  mapping.
+            if Mapping.Is_Empty then
+               Lines.Include
+                 (Writers.Write_Quad (Statement, Writers.Implicit_Datatype));
+            else
+               Lines.Include
+                 (Writers.Write_Quad
+                    (Relabel_Quad (Statement, Mapping),
+                     Writers.Implicit_Datatype));
+            end if;
+         end Emit_Statement;
+
       begin
          for Label of Blanks loop
             if Has_Issued (Canonical, Label) then
@@ -725,12 +798,7 @@ package body Flyology_RDF.Canonicalization is
             end if;
          end loop;
 
-         for Statement of All_Quads loop
-            Lines.Include
-              (Writers.Write_Quad
-                 (Relabel_Quad (Statement, Mapping),
-                  Writers.Implicit_Datatype));
-         end loop;
+         Datasets.Iterate (Value, Emit_Statement'Access);
 
          for Line of Lines loop
             Unbounded.Append (Output, Line);

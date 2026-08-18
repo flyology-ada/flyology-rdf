@@ -147,8 +147,6 @@ package body Flyology_RDF.Turtle_Writers is
       Prefixes : Prefix_Map;
       Result   : out Graph_Maps.Map)
    is
-      Grouped : Graph_Maps.Map;
-
       procedure Note (Statement : Quads.Quad);
 
       procedure Note (Statement : Quads.Quad) is
@@ -165,41 +163,41 @@ package body Flyology_RDF.Turtle_Writers is
          Object    : constant String :=
            Render (Quads.Object (Statement), Prefixes);
       begin
-         if not Grouped.Contains (Graph_Key) then
-            Grouped.Insert (Graph_Key, Subject_Maps.Empty_Map);
+         if not Result.Contains (Graph_Key) then
+            Result.Insert (Graph_Key, Subject_Maps.Empty_Map);
          end if;
 
+         --  Each level is updated through a reference rather than read out
+         --  and written back: an element copy here would copy everything
+         --  grouped so far, once per statement, which turns grouping
+         --  quadratic in the size of the dataset.
          declare
-            Subjects : Subject_Maps.Map := Grouped.Element (Graph_Key);
+            Subjects : Subject_Maps.Map renames Result (Graph_Key);
          begin
             if not Subjects.Contains (Subject) then
                Subjects.Insert (Subject, Predicate_Maps.Empty_Map);
             end if;
 
             declare
-               Predicates : Predicate_Maps.Map :=
-                 Subjects.Element (Subject);
+               Predicates : Predicate_Maps.Map renames Subjects (Subject);
             begin
                if not Predicates.Contains (Predicate) then
                   Predicates.Insert (Predicate, Object_Maps.Empty_Map);
                end if;
 
                declare
-                  Objects : Object_Maps.Map :=
-                    Predicates.Element (Predicate);
+                  Objects : Object_Maps.Map renames
+                    Predicates (Predicate);
                begin
                   Objects.Include (Object, True);
-                  Predicates.Replace (Predicate, Objects);
                end;
-               Subjects.Replace (Subject, Predicates);
             end;
-            Grouped.Replace (Graph_Key, Subjects);
          end;
       end Note;
 
    begin
+      Result := Graph_Maps.Empty_Map;
       Datasets.Iterate (Value, Note'Access);
-      Result := Grouped;
    end Group;
 
    procedure Write_Subjects
@@ -219,8 +217,8 @@ package body Flyology_RDF.Turtle_Writers is
            (Buffer, Indent & Subject_Maps.Key (Subject_Position));
 
          declare
-            Predicates : constant Predicate_Maps.Map :=
-              Subject_Maps.Element (Subject_Position);
+            Predicates : Predicate_Maps.Map renames
+              Subject (Subject_Position);
             First_Predicate : Boolean := True;
          begin
             for Predicate_Position in Predicates.Iterate loop
@@ -236,8 +234,8 @@ package body Flyology_RDF.Turtle_Writers is
                  (Buffer, Predicate_Maps.Key (Predicate_Position));
 
                declare
-                  Objects : constant Object_Maps.Map :=
-                    Predicate_Maps.Element (Predicate_Position);
+                  Objects : Object_Maps.Map renames
+                    Predicates (Predicate_Position);
                   First_Object : Boolean := True;
                begin
                   for Object_Position in Objects.Iterate loop
@@ -297,13 +295,13 @@ package body Flyology_RDF.Turtle_Writers is
 
          if Graph_Maps.Key (Position) = "" then
             Write_Subjects
-              (Buffer, Graph_Maps.Element (Position), "");
+              (Buffer, Grouped (Position), "");
          else
             Unbounded.Append
               (Buffer, "GRAPH " & Graph_Maps.Key (Position) & " {"
                & ASCII.LF);
             Write_Subjects
-              (Buffer, Graph_Maps.Element (Position), "    ");
+              (Buffer, Grouped (Position), "    ");
             Unbounded.Append (Buffer, "}" & ASCII.LF);
          end if;
       end loop;
