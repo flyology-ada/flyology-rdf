@@ -489,6 +489,20 @@ package body Flyology_RDF.Turtle_Parsers is
                do
                   Advance;
                end return;
+            when Lexers.Open_Bracket_Token =>
+               --  "~[]" names the reifier with an ANON, which the grammar
+               --  admits wherever it admits a blank node. The brackets
+               --  must be empty: a property list would be stating things
+               --  about the reifier, which the production does not allow.
+               Advance;
+               if Peek_Kind /= Lexers.Close_Bracket_Token then
+                  Reject (Malformed_Syntax, Annotation_Production);
+               end if;
+               return Result : constant Terms.Term :=
+                 Terms.Blank_Node (Fresh_Blank_Label)
+               do
+                  Advance;
+               end return;
             when others =>
                return Terms.Blank_Node (Fresh_Blank_Label);
          end case;
@@ -1024,8 +1038,26 @@ package body Flyology_RDF.Turtle_Parsers is
             Into.Graph_Is_Blank := False;
          end if;
 
+         --  The line-based grammars are line-based: a statement occupies
+         --  one line, and a line holds one statement. Only spaces and tabs
+         --  separate the terms, so the terminator sits on the line the
+         --  subject opened, and the next statement opens on a later one.
+         if Peek_Kind = Lexers.Dot_Token
+           and then Lexers.Start_Position (Current).Line /= Where.Start_Line
+         then
+            Reject (Malformed_Syntax, Statement_Production);
+         end if;
+
          Emit (Subject, Predicate, Object, Where);
          Expect (Lexers.Dot_Token, Statement_Production);
+
+         if Into.Line_Statement_Seen
+           and then Where.Start_Line = Into.Last_Statement_Line
+         then
+            Reject (Malformed_Syntax, Statement_Production);
+         end if;
+         Into.Line_Statement_Seen := True;
+         Into.Last_Statement_Line := Where.Start_Line;
 
          --  A graph label binds to its own statement only.
          Into.Graph_Is_Named := False;
@@ -1038,8 +1070,13 @@ package body Flyology_RDF.Turtle_Parsers is
       begin
          if Peek_Kind = Lexers.Open_Bracket_Token then
             --  A property list may stand alone as a statement, with or
-            --  without further predicates attached to it.
+            --  without further predicates attached to it -- but only
+            --  because reading it stated something. An empty "[]" is an
+            --  ANON, an ordinary subject, and a subject on its own is not
+            --  a statement. Counting what reading it contributed tells
+            --  the two apart.
             declare
+               Before  : constant Natural := Into.Quad_Count;
                Subject : constant Terms.Term := Parse_Property_List;
             begin
                if Peek_Kind not in Lexers.Dot_Token
@@ -1047,6 +1084,8 @@ package body Flyology_RDF.Turtle_Parsers is
                  and then not At_End
                then
                   Parse_Predicate_Object_List (Subject);
+               elsif Into.Quad_Count = Before then
+                  Reject (Malformed_Syntax, Statement_Production);
                end if;
             end;
          else

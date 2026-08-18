@@ -228,6 +228,45 @@ begin
       "<http://example.org/o> ." & ASCII.LF,
       "a bare triple");
 
+   --  RDF 1.2 gives reifier ::= '~' (iri | BlankNode)? and BlankNode
+   --  admits ANON, so "~[]" names the statement with a fresh node. The
+   --  corpus exercises ~:e, ~_:id and a bare ~, never this one.
+   Check_Parse
+     ("<http://e/s> <http://e/p> <http://e/o> ~[] .",
+      "<http://e/s> <http://e/p> <http://e/o> ." & ASCII.LF
+      & "_:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies> "
+      & "<<(<http://e/s> <http://e/p> <http://e/o>)>> ." & ASCII.LF,
+      "an ANON reifier names the statement");
+
+   --  The brackets must be empty: a property list would state things
+   --  about the reifier, which the production does not allow.
+   Check_Rejects
+     ("<http://e/s> <http://e/p> <http://e/o> ~[ <http://e/q> 1 ] .",
+      "a property list as a reifier");
+
+   --  "[]" is an ANON: an ordinary subject, and a subject on its own is
+   --  not a statement. A property list with content is, because reading
+   --  it stated something.
+   Check_Rejects ("[] .", "a bare ANON as a statement");
+
+   --  The line-based grammars are line-based: one statement to a line,
+   --  and a statement may not wrap. Only spaces and tabs separate terms.
+   Check_Rejects
+     ("<http://e/s> <http://e/p> <http://e/o> ."
+      & " <http://e/s> <http://e/p> <http://e/o2> .",
+      "two N-Triples statements sharing a line",
+      Syntax => Parsers.NTriples_Syntax);
+   Check_Rejects
+     ("<http://e/s> <http://e/p>" & ASCII.LF & " <http://e/o> .",
+      "an N-Triples statement wrapped across lines",
+      Syntax => Parsers.NTriples_Syntax);
+   Check_Rejects
+     ("<http://e/s> <http://e/p> <http://e/o> <http://e/g> ."
+      & " <http://e/s> <http://e/p> <http://e/o2> <http://e/g> .",
+      "two N-Quads statements sharing a line",
+      Syntax => Parsers.NQuads_Syntax);
+   Check_Rejects ("{ [] . }", "a bare ANON inside a graph block");
+
    Check_Parse
      (EX & "ex:s ex:p ex:o .",
       "<http://example.org/s> <http://example.org/p> " &

@@ -947,6 +947,17 @@ package body Flyology_SPARQL.Parsers is
                               | Lexers.Variable_Token
                      then
                         Syntax.Add_Child (Tree, Result, Parse_Term);
+                     elsif Peek = Lexers.Open_Bracket_Token then
+                        --  "~[]" names the reifier with an ANON, which
+                        --  the grammar admits wherever a blank node goes.
+                        --  The brackets must be empty; a property list
+                        --  would state things about the reifier.
+                        Advance;
+                        if Peek /= Lexers.Close_Bracket_Token then
+                           Fail ("a reifier takes an empty [ ]");
+                        end if;
+                        Advance;
+                        Syntax.Add_Child (Tree, Result, Fresh_Blank);
                      else
                         Syntax.Add_Child (Tree, Result, Fresh_Blank);
                      end if;

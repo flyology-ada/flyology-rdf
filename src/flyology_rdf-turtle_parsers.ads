@@ -343,6 +343,11 @@ private
       --  Document labels whose spelling a generated label had already
       --  taken, mapped to the replacement each was issued.
       Renamed_Labels  : Prefix_Maps.Map;
+      --  Where the last line-based statement began, so that two of them
+      --  cannot share a line.
+      Last_Statement_Line : Positive := 1;
+      Line_Statement_Seen : Boolean := False;
+
       Blank_Counter   : Natural := 0;
       Quad_Count      : Natural := 0;
       Byte_Count      : Natural := 0;
