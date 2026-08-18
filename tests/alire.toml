@@ -26,8 +26,7 @@ flyology_rdf = "*"
 #  The differential drives Fuseki over HTTP rather than starting a JVM for
 #  every document. This is a test dependency only: the library itself keeps
 #  no runtime dependency and no tasking.
-flyology_http = "*"
+flyology_http = ">=0.1.1-dev & <0.2.0"
 
 [[pins]]
 flyology_rdf = { path = ".." }
-flyology_http = { path = "../../flyology-http" }
