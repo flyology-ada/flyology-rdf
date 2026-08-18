@@ -205,6 +205,12 @@ procedure Parser_Tests is
              Label & " (diagnostic is "
              & Parsers.Diagnostic_Code'Image (Expected) & ", got "
              & Parsers.Diagnostic_Code'Image (Code_Whole) & ")");
+      --  A byte-at-a-time feed must fail the same way, not merely fail.
+      --  Reading this code was assigned and never compared, so a chunked
+      --  parse could report anything and pass.
+      Check (Code_Split = Code_Whole,
+             Label & " (same diagnostic byte-at-a-time, got "
+             & Parsers.Diagnostic_Code'Image (Code_Split) & ")");
    end Check_Rejects;
 
    EX : constant String := "@prefix ex: <http://example.org/> ." & ASCII.LF;
@@ -449,6 +455,19 @@ begin
    --  Other rejections
    ------------------------------------------------------------------
    Check_Rejects (EX & "ex:s ex:p ex:o", "a missing terminator");
+
+   --  The line-based grammars admit only the short double-quoted form.
+   --  The token records how many quotes there were and now also which,
+   --  because without that an apostrophe is indistinguishable from a
+   --  double quote and N-Triples accepts a literal it has no rule for.
+   Check_Rejects
+     ("<http://e/s> <http://e/p> 'x' .",
+      "a single-quoted literal in N-Triples",
+      Syntax => Parsers.NTriples_Syntax);
+   Check_Rejects
+     ("<http://e/s> <http://e/p> 'x' <http://e/g> .",
+      "a single-quoted literal in N-Quads",
+      Syntax => Parsers.NQuads_Syntax);
    Check_Rejects ("ex:s ex:p ex:o .", "an undefined prefix",
                   Parsers.Undefined_Prefix);
    Check_Rejects (EX & "ex:s ""literal"" ex:o .",

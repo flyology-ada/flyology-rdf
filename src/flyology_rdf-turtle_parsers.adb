@@ -961,9 +961,12 @@ package body Flyology_RDF.Turtle_Parsers is
                when Lexers.String_Token =>
                   if not Allow_Literal then
                      Reject (Malformed_Syntax, What);
-                  elsif Lexers.Form (Current) = Lexers.Long_Quoted then
-                     --  The long form belongs to Turtle, not to the
-                     --  line-based grammars.
+                  elsif Lexers.Form (Current) = Lexers.Long_Quoted
+                    or else Lexers.Quote (Current) /= '"'
+                  then
+                     --  The line-based grammars admit only the short
+                     --  double-quoted form: neither the long form nor the
+                     --  apostrophe is theirs.
                      Reject (Malformed_Syntax, Literal_Production);
                   end if;
                   return Parse_Literal;

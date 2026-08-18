@@ -267,6 +267,12 @@ procedure Oracle_Differential is
    Considered      : Natural := 0;
    Skipped_Large   : Natural := 0;
    We_Accepted     : Natural := 0;
+
+   --  A document that states nothing canonicalizes to nothing, and there
+   --  is no graph to ask an oracle about. Counted rather than returned
+   --  from in silence: a document nobody compared is not a document that
+   --  agreed.
+   Nothing_Stated  : Natural := 0;
    Cross_Checked   : Natural := 0;
    Documented      : Natural := 0;
    Divergences     : Unbounded.Unbounded_String;
@@ -752,6 +758,7 @@ procedure Oracle_Differential is
          Expected : constant String := Canonical (Mine);
       begin
          if Expected = "" then
+            Nothing_Stated := Nothing_Stated + 1;
             return;
          end if;
 
@@ -995,6 +1002,9 @@ begin
    IO.Put_Line ("  documents seen      " & Considered'Image);
    IO.Put_Line ("  skipped, over 256K  " & Skipped_Large'Image);
    IO.Put_Line ("  we accepted         " & We_Accepted'Image);
+   IO.Put_Line ("  stated nothing      " & Nothing_Stated'Image);
+   IO.Put_Line ("  compared            "
+                & Natural'Image (We_Accepted - Nothing_Stated));
 
    for Which in Oracle_Id loop
       if Present (Which) then

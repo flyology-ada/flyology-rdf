@@ -284,6 +284,33 @@ begin
    --  multiplicative continuations of its own.
    Check_Round_Trip ("SELECT * WHERE { FILTER(?x - 1 +2 = 0) }",
                      "an operator step then a signed-literal step");
+
+   --  A node the query wrote and a node the parser invented are different
+   --  nodes. The writer prints both as "_:" and their text, so a generated
+   --  label must never take a spelling the query already uses.
+   declare
+      Written : constant String :=
+        Writers.To_SPARQL
+          (Parsers.Parse ("SELECT * { _:g1 ?p ?o . [] ?q ?z }"));
+      Occurrences : Natural := 0;
+   begin
+      for Index in Written'First .. Written'Last - 3 loop
+         if Written (Index .. Index + 3) = "_:g1" then
+            Occurrences := Occurrences + 1;
+         end if;
+      end loop;
+      Check (Occurrences <= 1,
+             "a generated label does not merge with a query's label");
+   end;
+
+   --  SPARQL matches every keyword but "a" without regard to case, and its
+   --  boolean literals are keywords. The suite's own
+   --  case-insensitive-booleans query depends on this and is invisible to
+   --  the syntax harness, which skips evaluation entries.
+   Check_Round_Trip ("SELECT (TRUE AS ?t) (False AS ?f) {}",
+                     "case-variant boolean literals");
+   Check_Round_Trip ("SELECT * { ?s ?p TRUE }",
+                     "a case-variant boolean in a pattern");
    Check_Round_Trip ("SELECT * WHERE { FILTER(?x+1*2 = 3) }",
                      "a product after a signed literal");
 

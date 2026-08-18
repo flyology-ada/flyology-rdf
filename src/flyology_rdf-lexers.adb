@@ -161,6 +161,9 @@ package body Flyology_RDF.Lexers is
 
    function Form (Value : Token) return String_Form is (Value.Form_Value);
 
+   function Quote (Value : Token) return Quote_Character
+   is (Value.Quote_Value);
+
    function Has_Direction (Value : Token) return Boolean
    is (Value.Has_Direction_Data);
 
@@ -183,6 +186,7 @@ package body Flyology_RDF.Lexers is
         and then Left.Text_Value = Right.Text_Value
         and then Left.Prefix_Value = Right.Prefix_Value
         and then Left.Form_Value = Right.Form_Value
+        and then Left.Quote_Value = Right.Quote_Value
         and then Left.Has_Direction_Data = Right.Has_Direction_Data
         and then (not Left.Has_Direction_Data
                   or else Left.Direction_Data = Right.Direction_Data);
@@ -234,6 +238,7 @@ package body Flyology_RDF.Lexers is
             Text_Value         => Buffer,
             Prefix_Value       => Prefix_Buffer,
             Form_Value         => Result.Form_Value,
+            Quote_Value        => Result.Quote_Value,
             Has_Direction_Data => Result.Has_Direction_Data,
             Direction_Data     => Result.Direction_Data,
             Start_Value        => Start_Position_Value,
@@ -1144,6 +1149,13 @@ package body Flyology_RDF.Lexers is
                Emit (A_Token);
             elsif Word = "true" or else Word = "false" then
                Emit (Boolean_Token);
+            elsif Dialect = SPARQL_Dialect
+              and then Upper in "TRUE" | "FALSE"
+            then
+               --  SPARQL matches every keyword but "a" without regard to
+               --  case, and its boolean literals are keywords. The RDF and
+               --  N3 grammars quote theirs literally, so they are not.
+               Emit (Boolean_Token);
             elsif Upper = "PREFIX" then
                Emit (Sparql_Prefix_Token);
             elsif Upper = "BASE" then
@@ -1379,6 +1391,9 @@ package body Flyology_RDF.Lexers is
             declare
                Quote : constant Scalar_Value := Scalar;
             begin
+               Result.Quote_Value :=
+                 (if Quote = 16#22# then Character'Val (16#22#)
+                  else Character'Val (16#27#));
                Step (Scalar, Length);
                Scan_String (Quote);
             end;

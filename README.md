@@ -319,8 +319,12 @@ us in all five:
   serialization, because the document's own base is a `file:` IRI and the
   schemes differ there.
 
-Coverage: 2,443 documents seen, 2,081 accepted, 2,049 of those read back by
-Jena and 1,766 by oxigraph. No divergence from either.
+Coverage: 2,443 documents seen, 2,081 accepted, and 2,049 compared -- the
+remaining 32 state nothing, so there is no graph to ask about. Jena answered
+all 2,049 of both questions; Oxigraph declined some and answered RDF-star
+for others, reaching 1,758 and 1,766. Neither differed anywhere, and the
+harness reports what it did not compare rather than returning from it in
+silence.
 
 ## Benchmarks
 

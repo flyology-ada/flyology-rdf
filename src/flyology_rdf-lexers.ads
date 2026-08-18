@@ -110,6 +110,12 @@ package Flyology_RDF.Lexers is
    --  @enum Long_Quoted Written with three
    type String_Form is (Short_Quoted, Long_Quoted);
 
+   --  Which character quoted a String_Token. The form above says how
+   --  many there were; this says which, and the line-based grammars
+   --  need it because they admit only the double-quoted forms.
+   subtype Quote_Character is Character with
+     Static_Predicate => Quote_Character in '"' | ''';
+
    --  Outcome of one scan attempt.
    --  @enum Token_Found A complete token was scanned
    --  @enum Needs_More_Input The buffer ends part-way through a token; the
@@ -164,6 +170,11 @@ package Flyology_RDF.Lexers is
    --  @param Value Token to inspect
    --  @return Short_Quoted or Long_Quoted
    function Form (Value : Token) return String_Form;
+
+   --  Return the character a String_Token was quoted with.
+   --  @param Value Token to inspect
+   --  @return The quote character
+   function Quote (Value : Token) return Quote_Character;
 
    --  Report whether a language token carries a base direction.
    --
@@ -242,6 +253,7 @@ private
       Text_Value     : Unbounded.Unbounded_String;
       Prefix_Value   : Unbounded.Unbounded_String;
       Form_Value     : String_Form := Short_Quoted;
+      Quote_Value    : Quote_Character := '"';
       Has_Direction_Data : Boolean := False;
       Direction_Data : Direction_Value := Left_To_Right;
       Start_Value    : Parser_Cursors.Cursor_State :=

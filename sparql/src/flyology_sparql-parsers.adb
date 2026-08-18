@@ -21,6 +21,9 @@ package body Flyology_SPARQL.Parsers is
    package Name_Id_Maps is new Ada.Containers.Indefinite_Ordered_Maps
      (Key_Type => String, Element_Type => Positive);
 
+   package Label_Maps is new Ada.Containers.Indefinite_Ordered_Maps
+     (Key_Type => String, Element_Type => String);
+
    package Flag_Vectors is new Ada.Containers.Vectors
      (Index_Type => Positive, Element_Type => Boolean);
 
@@ -162,19 +165,54 @@ package body Flyology_SPARQL.Parsers is
 
       Blank_Counter : Natural := 0;
 
+      --  A node the query wrote and a node the parser invented are
+      --  different nodes, and the writer prints both as "_:" and their
+      --  text, so a generated label must not take a spelling the query
+      --  uses and a query label must not take one already generated.
+      Document_Labels  : String_Sets.Set;
+      Generated_Labels : String_Sets.Set;
+      Renamed_Labels   : Label_Maps.Map;
+
       --  Collections, property lists and unnamed reifiers each need a node
       --  the query did not name.
       function Fresh_Blank return Syntax.Node_Reference is
       begin
-         Blank_Counter := Blank_Counter + 1;
-         declare
-            Image : constant String := Natural'Image (Blank_Counter);
-         begin
-            return Node (Syntax.Blank_Node,
-                         "g" & Image (Image'First + 1 .. Image'Last),
-                         Detail => "generated");
-         end;
+         loop
+            Blank_Counter := Blank_Counter + 1;
+            declare
+               Image : constant String := Natural'Image (Blank_Counter);
+               Label : constant String :=
+                 "g" & Image (Image'First + 1 .. Image'Last);
+            begin
+               if not Document_Labels.Contains (Label) then
+                  Generated_Labels.Include (Label);
+                  return Node (Syntax.Blank_Node, Label,
+                               Detail => "generated");
+               end if;
+            end;
+         end loop;
       end Fresh_Blank;
+
+      --  A label the query wrote, renamed when a generated node already
+      --  took its spelling. The renaming is remembered, because every
+      --  later mention of that label is the same node.
+      function Document_Blank (Raw : String) return Syntax.Node_Reference is
+      begin
+         if Renamed_Labels.Contains (Raw) then
+            return Node (Syntax.Blank_Node, Renamed_Labels.Element (Raw));
+         end if;
+         if Generated_Labels.Contains (Raw) then
+            declare
+               Replacement : constant Syntax.Node_Reference := Fresh_Blank;
+            begin
+               Renamed_Labels.Insert
+                 (Raw, Syntax.Text (Syntax.To_Query (Tree), Replacement));
+               return Replacement;
+            end;
+         end if;
+         Document_Labels.Include (Raw);
+         return Node (Syntax.Blank_Node, Raw);
+      end Document_Blank;
 
       function Parse_Expression return Syntax.Node_Reference;
       function Parse_Group return Syntax.Node_Reference;
@@ -203,7 +241,7 @@ package body Flyology_SPARQL.Parsers is
 
             when Lexers.Blank_Label_Token =>
                return Result : constant Syntax.Node_Reference :=
-                 Node (Syntax.Blank_Node, Lexers.Text (Current))
+                 Document_Blank (Lexers.Text (Current))
                do
                   Advance;
                end return;
