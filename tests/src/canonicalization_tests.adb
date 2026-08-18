@@ -27,7 +27,6 @@ procedure Canonicalization_Tests is
    package Parsers renames Flyology_RDF.Turtle_Parsers;
 
    use type Canon.Result_Status;
-   use type Parsers.Parse_Status;
 
    Checks   : Natural := 0;
    Failures : Natural := 0;

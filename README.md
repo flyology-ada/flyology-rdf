@@ -52,7 +52,8 @@ well in a plain sequential program and inside a lightweight-task runtime.
 **Writing.** N-Quads, Turtle, TriG, Notation3, SPARQL.
 
 **Beyond serialization.** A dataset with set semantics and deterministic
-iteration; RDFC-1.0 canonicalization and the dataset isomorphism it decides;
+iteration; RDFC-1.0 canonicalization with either digest it admits, the
+issued-identifier map, and the dataset isomorphism it decides;
 a self-delimiting binary term encoding whose injectivity is structural.
 
 **Not here.** SPARQL evaluation, SPARQL Update, JSON-LD, RDF/XML,
@@ -84,7 +85,7 @@ not a verdict:
 | Suite | Examined | Rejected valid | Accepted invalid | Wrong result |
 | --- | --- | --- | --- | --- |
 | RDF 1.1 and 1.2 | 1050 | **0** | **0** | **0** |
-| RDFC-1.0 canonicalization | 64 | — | — | **0** |
+| RDFC-1.0 canonicalization | 86 | — | — | **0** |
 | Notation3 syntax | 1070 | **0** | **0** | — |
 | SPARQL 1.1 syntax | 488 | **0** | **0** | — |
 
@@ -102,8 +103,8 @@ RDF or SPARQL suites carries that status.
 
 The canonicalization suite grades the canonical form byte for byte, because
 RDFC-1.0 fixes both the labels and their order. Twenty-one of its entries
-grade the issued-identifier map, which this crate does not expose, and one
-uses SHA-384, which it does not implement; both are counted as skipped.
+grade the issued-identifier map instead, and two ask for SHA-384; all of
+them are run. Nothing in that suite is skipped.
 
 What cannot be graded is counted as skipped, not passed: 811 SPARQL
 evaluation entries need a query engine, 83 more are SPARQL Update rather

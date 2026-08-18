@@ -1,8 +1,6 @@
-with Ada.Containers.Indefinite_Ordered_Maps;
 with Ada.Containers.Indefinite_Ordered_Sets;
 with Ada.Containers.Indefinite_Vectors;
 
-with Flyology_RDF.Digests;
 with Flyology_RDF.IRIs;
 with Flyology_RDF.NQuads_Writers;
 with Flyology_RDF.Quads;
@@ -234,7 +232,21 @@ package body Flyology_RDF.Canonicalization is
      (Value        : Datasets.Dataset;
       Output       : out Unbounded.Unbounded_String;
       Status       : out Result_Status;
-      Maximum_Work : Positive := Default_Maximum_Work)
+      Maximum_Work : Positive := Default_Maximum_Work;
+      Algorithm    : Hash_Algorithm := SHA_256)
+   is
+      Ignored : Label_Maps.Map;
+   begin
+      Canonicalize (Value, Output, Ignored, Status, Maximum_Work, Algorithm);
+   end Canonicalize;
+
+   procedure Canonicalize
+     (Value        : Datasets.Dataset;
+      Output       : out Unbounded.Unbounded_String;
+      Labels       : out Label_Maps.Map;
+      Status       : out Result_Status;
+      Maximum_Work : Positive := Default_Maximum_Work;
+      Algorithm    : Hash_Algorithm := SHA_256)
    is
       All_Quads   : Quad_Vectors.Vector;
       Blank_Quads : Quad_Lists.Map;
@@ -305,7 +317,7 @@ package body Flyology_RDF.Canonicalization is
       begin
          Spend;
          if not Blank_Quads.Contains (Label) then
-            return Digests.SHA_256 ("");
+            return Digests.Digest ("", Algorithm);
          end if;
 
          for Statement of Blank_Quads.Element (Label) loop
@@ -355,7 +367,7 @@ package body Flyology_RDF.Canonicalization is
          end;
          pragma Unreferenced (Sorted);
 
-         return Digests.SHA_256 (Unbounded.To_String (Buffer));
+         return Digests.Digest (Unbounded.To_String (Buffer), Algorithm);
       end Hash_First_Degree;
 
       function Hash_N_Degree
@@ -387,7 +399,7 @@ package body Flyology_RDF.Canonicalization is
             Unbounded.Append (Buffer, Hash_First_Degree (Related));
          end if;
 
-         return Digests.SHA_256 (Unbounded.To_String (Buffer));
+         return Digests.Digest (Unbounded.To_String (Buffer), Algorithm);
       end Hash_Related;
 
       --  RDFC-1.0 section 4.8. This is where the cost lives: when several
@@ -563,7 +575,7 @@ package body Flyology_RDF.Canonicalization is
             end;
          end loop;
 
-         return Digests.SHA_256 (Unbounded.To_String (Buffer));
+         return Digests.Digest (Unbounded.To_String (Buffer), Algorithm);
       end Hash_N_Degree;
 
       Non_Normalized : String_Sets.Set;
@@ -705,6 +717,7 @@ package body Flyology_RDF.Canonicalization is
          for Label of Blanks loop
             if Has_Issued (Canonical, Label) then
                Mapping.Insert (Label, Issued_For (Canonical, Label));
+               Labels.Insert (Label, Issued_For (Canonical, Label));
             end if;
          end loop;
 
@@ -724,17 +737,20 @@ package body Flyology_RDF.Canonicalization is
    exception
       when Exhausted =>
          Output := Unbounded.Null_Unbounded_String;
+         Labels := Label_Maps.Empty_Map;
          Status := Work_Limit_Reached;
    end Canonicalize;
 
    function To_Canonical_NQuads
      (Value        : Datasets.Dataset;
-      Maximum_Work : Positive := Default_Maximum_Work) return String
+      Maximum_Work : Positive := Default_Maximum_Work;
+      Algorithm    : Hash_Algorithm := SHA_256) return String
    is
       Output : Unbounded.Unbounded_String;
+      Labels : Label_Maps.Map;
       Status : Result_Status;
    begin
-      Canonicalize (Value, Output, Status, Maximum_Work);
+      Canonicalize (Value, Output, Labels, Status, Maximum_Work, Algorithm);
       if Status = Work_Limit_Reached then
          raise Work_Limit_Error with
            "canonicalization exceeded its work bound";
@@ -744,8 +760,9 @@ package body Flyology_RDF.Canonicalization is
 
    function Is_Isomorphic
      (Left, Right  : Datasets.Dataset;
-      Maximum_Work : Positive := Default_Maximum_Work) return Boolean
-   is (To_Canonical_NQuads (Left, Maximum_Work)
-       = To_Canonical_NQuads (Right, Maximum_Work));
+      Maximum_Work : Positive := Default_Maximum_Work;
+      Algorithm    : Hash_Algorithm := SHA_256) return Boolean
+   is (To_Canonical_NQuads (Left, Maximum_Work, Algorithm)
+       = To_Canonical_NQuads (Right, Maximum_Work, Algorithm));
 
 end Flyology_RDF.Canonicalization;

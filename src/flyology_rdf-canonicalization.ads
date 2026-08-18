@@ -1,6 +1,8 @@
+with Ada.Containers.Indefinite_Ordered_Maps;
 with Ada.Strings.Unbounded;
 
 with Flyology_RDF.Datasets;
+with Flyology_RDF.Digests;
 
 --  RDF Dataset Canonicalization, RDFC-1.0.
 --
@@ -25,6 +27,19 @@ package Flyology_RDF.Canonicalization is
    --     output is not usable
    type Result_Status is (Canonicalized, Work_Limit_Reached);
 
+   --  Which digest to canonicalize with. RDFC-1.0 names SHA-256 and admits
+   --  SHA-384, and the labels a processor issues differ between them, so
+   --  this is part of the request rather than a tuning knob.
+   subtype Hash_Algorithm is Digests.Hash_Algorithm;
+   SHA_256 : constant Hash_Algorithm := Digests.SHA_256;
+   SHA_384 : constant Hash_Algorithm := Digests.SHA_384;
+
+   --  The canonical identifier issued to each blank node, keyed by the
+   --  label the input used. RDFC-1.0 specifies this map, and it is the only
+   --  way to say which node in the output was which node in the input.
+   package Label_Maps is new Ada.Containers.Indefinite_Ordered_Maps
+     (Key_Type => String, Element_Type => String);
+
    --  Default bound on permutation and recursion work.
    --
    --  Ordinary data does not approach this: the bound exists for datasets
@@ -43,7 +58,24 @@ package Flyology_RDF.Canonicalization is
      (Value        : Datasets.Dataset;
       Output       : out Ada.Strings.Unbounded.Unbounded_String;
       Status       : out Result_Status;
-      Maximum_Work : Positive := Default_Maximum_Work);
+      Maximum_Work : Positive := Default_Maximum_Work;
+      Algorithm    : Hash_Algorithm := SHA_256);
+
+   --  Canonicalize, and report which identifier each blank node was issued.
+   --  @param Value Dataset to canonicalize
+   --  @param Output Canonical N-Quads, meaningful only when Canonicalized
+   --  @param Labels Input label to issued identifier, empty when not
+   --     Canonicalized
+   --  @param Status Whether canonicalization completed
+   --  @param Maximum_Work Bound on permutation and recursion work
+   --  @param Algorithm Which digest to use
+   procedure Canonicalize
+     (Value        : Datasets.Dataset;
+      Output       : out Ada.Strings.Unbounded.Unbounded_String;
+      Labels       : out Label_Maps.Map;
+      Status       : out Result_Status;
+      Maximum_Work : Positive := Default_Maximum_Work;
+      Algorithm    : Hash_Algorithm := SHA_256);
 
    --  Canonicalize into canonical N-Quads.
    --
@@ -55,7 +87,8 @@ package Flyology_RDF.Canonicalization is
    --  @exception Work_Limit_Error The bound was reached
    function To_Canonical_NQuads
      (Value        : Datasets.Dataset;
-      Maximum_Work : Positive := Default_Maximum_Work) return String;
+      Maximum_Work : Positive := Default_Maximum_Work;
+      Algorithm    : Hash_Algorithm := SHA_256) return String;
 
    --  Report whether two datasets denote the same thing.
    --
@@ -69,6 +102,7 @@ package Flyology_RDF.Canonicalization is
    --  @exception Work_Limit_Error The bound was reached
    function Is_Isomorphic
      (Left, Right  : Datasets.Dataset;
-      Maximum_Work : Positive := Default_Maximum_Work) return Boolean;
+      Maximum_Work : Positive := Default_Maximum_Work;
+      Algorithm    : Hash_Algorithm := SHA_256) return Boolean;
 
 end Flyology_RDF.Canonicalization;

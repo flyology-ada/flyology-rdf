@@ -55,9 +55,9 @@ procedure Canonicalization_Conformance is
 
    Examined        : Natural := 0;
    Eval_Entries    : Natural := 0;
+   Map_Entries     : Natural := 0;
    Negative        : Natural := 0;
-   Skipped_Map     : Natural := 0;
-   Skipped_Digest  : Natural := 0;
+   With_SHA_384    : Natural := 0;
    Skipped_Missing : Natural := 0;
    Wrong_Result    : Natural := 0;
    Divergences     : Unbounded.Unbounded_String;
@@ -192,6 +192,47 @@ procedure Canonicalization_Conformance is
       return Value;
    end Relative_Path;
 
+   --  A map result is a flat JSON object whose keys and values are all
+   --  strings, which is the whole of what this suite writes. Pairing the
+   --  quoted runs reads it exactly, and a real JSON parser would be a
+   --  dependency taken to read four hundred bytes.
+   function Read_Map (Path : String) return String_Maps.Map is
+      Text   : constant String := Read_File (Path);
+      Result : String_Maps.Map;
+      Index  : Natural := Text'First;
+      Key    : Unbounded.Unbounded_String;
+      Have   : Boolean := False;
+   begin
+      while Index <= Text'Last loop
+         if Text (Index) = '"' then
+            declare
+               First : constant Natural := Index + 1;
+               Last  : Natural := First;
+            begin
+               while Last <= Text'Last and then Text (Last) /= '"' loop
+                  Last := Last + 1;
+               end loop;
+               exit when Last > Text'Last;
+               declare
+                  Item : constant String := Text (First .. Last - 1);
+               begin
+                  if Have then
+                     Result.Include (Unbounded.To_String (Key), Item);
+                     Have := False;
+                  else
+                     Key := Unbounded.To_Unbounded_String (Item);
+                     Have := True;
+                  end if;
+               end;
+               Index := Last + 1;
+            end;
+         else
+            Index := Index + 1;
+         end if;
+      end loop;
+      return Result;
+   end Read_Map;
+
    procedure Diverged (Entry_Name, Why : String) is
    begin
       Unbounded.Append
@@ -210,19 +251,6 @@ procedure Canonicalization_Conformance is
          else "SHA256");
    begin
       if Ada.Strings.Fixed.Index (Kind_Name, "RDFC10") = 0 then
-         return;
-      end if;
-
-      if Ada.Strings.Fixed.Index (Kind_Name, "MapTest") > 0 then
-         --  A map test grades the issued-identifier map, which this crate
-         --  does not expose. Counted, not quietly dropped.
-         Skipped_Map := Skipped_Map + 1;
-         return;
-      end if;
-
-      if Digest /= "SHA256" then
-         --  RDFC-1.0 admits SHA-384; this crate implements SHA-256 only.
-         Skipped_Digest := Skipped_Digest + 1;
          return;
       end if;
 
@@ -245,12 +273,21 @@ procedure Canonicalization_Conformance is
             Succeeded : Boolean;
             Negative_Entry : constant Boolean :=
               Ada.Strings.Fixed.Index (Kind_Name, "Negative") > 0;
+            Map_Entry : constant Boolean :=
+              Ada.Strings.Fixed.Index (Kind_Name, "MapTest") > 0;
+            Algorithm : constant Canon.Hash_Algorithm :=
+              (if Digest = "SHA384" then Canon.SHA_384 else Canon.SHA_256);
          begin
             Examined := Examined + 1;
             if Negative_Entry then
                Negative := Negative + 1;
+            elsif Map_Entry then
+               Map_Entries := Map_Entries + 1;
             else
                Eval_Entries := Eval_Entries + 1;
+            end if;
+            if Digest = "SHA384" then
+               With_SHA_384 := With_SHA_384 + 1;
             end if;
 
             Load (Read_File (Input), "http://example.org/canon/input/",
@@ -263,9 +300,12 @@ procedure Canonicalization_Conformance is
 
             declare
                Produced : Unbounded.Unbounded_String;
+               Issued   : Canon.Label_Maps.Map;
                Status   : Canon.Result_Status;
             begin
-               Canon.Canonicalize (Data, Produced, Status);
+               Canon.Canonicalize
+                 (Data, Produced, Issued, Status,
+                  Algorithm => Algorithm);
 
                if Negative_Entry then
                   --  A negative entry is a dataset built to be expensive.
@@ -298,6 +338,51 @@ procedure Canonicalization_Conformance is
                      Skipped_Missing := Skipped_Missing + 1;
                      return;
                   end if;
+
+                  if Map_Entry then
+                     declare
+                        Expected : constant String_Maps.Map :=
+                          Read_Map (Expected_Path);
+                     begin
+                        if Natural (Expected.Length)
+                           /= Natural (Issued.Length)
+                        then
+                           Wrong_Result := Wrong_Result + 1;
+                           Diverged
+                             (Entry_Name,
+                              "issued" & Issued.Length'Image
+                              & " identifiers, expected"
+                              & Expected.Length'Image);
+                           return;
+                        end if;
+                        for Position in Expected.Iterate loop
+                           declare
+                              Label : constant String :=
+                                String_Maps.Key (Position);
+                              Want  : constant String :=
+                                String_Maps.Element (Position);
+                           begin
+                              if not Issued.Contains (Label) then
+                                 Wrong_Result := Wrong_Result + 1;
+                                 Diverged
+                                   (Entry_Name,
+                                    "no identifier issued for _:" & Label);
+                                 return;
+                              elsif Issued.Element (Label) /= Want then
+                                 Wrong_Result := Wrong_Result + 1;
+                                 Diverged
+                                   (Entry_Name,
+                                    "_:" & Label & " was issued "
+                                    & Issued.Element (Label) & ", expected "
+                                    & Want);
+                                 return;
+                              end if;
+                           end;
+                        end loop;
+                     end;
+                     return;
+                  end if;
+
                   declare
                      Expected : constant String := Read_File (Expected_Path);
                      Actual   : constant String :=
@@ -365,9 +450,9 @@ begin
 
    IO.Put_Line ("  entries examined    " & Examined'Image);
    IO.Put_Line ("    evaluation        " & Eval_Entries'Image);
+   IO.Put_Line ("    identifier map    " & Map_Entries'Image);
    IO.Put_Line ("    negative          " & Negative'Image);
-   IO.Put_Line ("  skipped, map        " & Skipped_Map'Image);
-   IO.Put_Line ("  skipped, SHA-384    " & Skipped_Digest'Image);
+   IO.Put_Line ("    of those, SHA-384 " & With_SHA_384'Image);
    IO.Put_Line ("  skipped, missing    " & Skipped_Missing'Image);
    IO.Put_Line ("  wrong result        " & Wrong_Result'Image);
 
