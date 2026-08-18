@@ -1,0 +1,167 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "37 5 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flyology-rdf-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install Alire
+        uses: alire-project/setup-alire@fc4c8ce471aa30b3af0d39ce15add1ee9eaf28f2 # v6.0.0
+        with:
+          version: 2.1.1
+          toolchain: >-
+            gnat_native=16.1.0
+            gprbuild=26.0.1
+          cache: true
+      - name: Configure Flyology index
+        run: |
+          alr index --reset-community
+          alr index --add=git+https://github.com/flyology-ada/alire-index.git --name=flyology --before=community
+      # The corpora are fetched by the same script a contributor runs, rather
+      # than by a checkout step repeating its pins here. Two copies of a
+      # commit hash drift, and a conformance number produced against an
+      # unrecorded revision is not evidence -- which is the whole reason the
+      # script pins them. The cache key is the script, so changing a pin
+      # fetches again.
+      - name: Cache the W3C corpora
+        uses: actions/cache@640a1c2554105b57832a23eea0b4672fc7a790d5 # v4.2.3
+        with:
+          path: tests/data
+          key: corpora-${{ hashFiles('scripts/provision-oracles.sh') }}
+      - name: Provision the corpora
+        run: ./scripts/provision-oracles.sh corpora
+      - name: Run the RDF suite
+        run: ./scripts/test.sh
+      - name: Run the Notation3 suite
+        working-directory: n3
+        run: ./scripts/test.sh
+      - name: Run the SPARQL suite
+        working-directory: sparql
+        run: ./scripts/test.sh
+
+  differential:
+    name: Oracle differential
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install Alire
+        uses: alire-project/setup-alire@fc4c8ce471aa30b3af0d39ce15add1ee9eaf28f2 # v6.0.0
+        with:
+          version: 2.1.1
+          toolchain: >-
+            gnat_native=16.1.0
+            gprbuild=26.0.1
+          cache: true
+      - name: Configure Flyology index
+        run: |
+          alr index --reset-community
+          alr index --add=git+https://github.com/flyology-ada/alire-index.git --name=flyology --before=community
+      - name: Cache the W3C corpora
+        uses: actions/cache@640a1c2554105b57832a23eea0b4672fc7a790d5 # v4.2.3
+        with:
+          path: tests/data
+          key: corpora-${{ hashFiles('scripts/provision-oracles.sh') }}
+      # Building oxigraph and fetching a pinned JRE and Jena costs minutes,
+      # and the script pins every one of them, so the same key that decides
+      # the corpora decides these.
+      - name: Cache the oracles
+        uses: actions/cache@640a1c2554105b57832a23eea0b4672fc7a790d5 # v4.2.3
+        with:
+          path: |
+            vendor/oracles
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: oracles-${{ runner.os }}-${{ hashFiles('scripts/provision-oracles.sh') }}
+      - name: Provision the corpora and the oracles
+        run: ./scripts/provision-oracles.sh
+      # The differential is the one check that asks an implementation other
+      # than this one, so a run where no oracle answered is a failure and
+      # not a pass. The harness decides that itself; this only makes sure it
+      # was given the chance.
+      - name: Report what was provisioned
+        run: ./scripts/provision-oracles.sh verify
+      - name: Run the differential
+        working-directory: tests
+        run: |
+          alr exec -- gprbuild -P flyology_rdf_tests.gpr
+          ./bin/oracle_differential
+
+  benchmarks:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install Alire
+        uses: alire-project/setup-alire@fc4c8ce471aa30b3af0d39ce15add1ee9eaf28f2 # v6.0.0
+        with:
+          version: 2.1.1
+          toolchain: >-
+            gnat_native=16.1.0
+            gprbuild=26.0.1
+          cache: true
+      - name: Configure Flyology index
+        run: |
+          alr index --reset-community
+          alr index --add=git+https://github.com/flyology-ada/alire-index.git --name=flyology --before=community
+      # Timings from a shared runner are not comparable with timings from
+      # anywhere else, so nothing here is asserted about how long a case
+      # takes. What this catches is the benchmark crate rotting, which is
+      # what happens to code nothing builds.
+      - name: Build and run the benchmarks
+        run: ./scripts/benchmark.sh 3 ci
+
+  release-build:
+    name: Release build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install Alire
+        uses: alire-project/setup-alire@fc4c8ce471aa30b3af0d39ce15add1ee9eaf28f2 # v6.0.0
+        with:
+          version: 2.1.1
+          toolchain: >-
+            gnat_native=16.1.0
+            gprbuild=26.0.1
+          cache: true
+      - name: Configure Flyology index
+        run: |
+          alr index --reset-community
+          alr index --add=git+https://github.com/flyology-ada/alire-index.git --name=flyology --before=community
+      # The tests build in checked mode, where assertions carry the term
+      # invariants. Release is what a consumer gets, and it is a different
+      # compilation: it has to be built or it is not known to build.
+      - name: Build every crate in release mode
+        env:
+          FLYOLOGY_RDF_BUILD_MODE: release
+        run: |
+          alr -n build
+          cd n3 && alr -n build && cd ..
+          cd sparql && alr -n build
