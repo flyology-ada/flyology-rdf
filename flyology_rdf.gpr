@@ -21,8 +21,8 @@ project Flyology_RDF is
 
       case Build_Mode is
          when "checked" =>
-            --  Assertions carry the constructor-enforced term invariants, so
-            --  the checked mode is the one the test and fuzz builds use.
+            --  Assertions carry the constructor-enforced term invariants,
+            --  so the checked mode is the one the tests build in.
             for Default_Switches ("Ada") use Common & ("-O1", "-gnata");
          when "release" =>
             --  Assertions are deliberately absent here: the published

@@ -43,3 +43,12 @@ __pycache__/
 /tests/data/w3c-sparql-tests
 /tests/data/w3c-n3-tests
 /build/site/
+/examples/alire/
+/examples/config/
+/examples/obj/
+/examples/bin/
+/tests/run/
+/n3/docs/api/
+/n3/docs/gnatdoc/
+/sparql/docs/api/
+/sparql/docs/gnatdoc/

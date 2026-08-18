@@ -1,7 +1,0 @@
-dependency:flyology_n3=0.1.0-dev=c9bce29c5a44022374dd3f5eeb182b6f383167085271f243054e837d8f229418
-dependency:flyology_rdf=0.1.0-dev=fa257e7544293f95c614ddabff2fa71672bf739dc5ea5102fba402d02da33dcd
-dependency:flyology_sparql=0.1.0-dev=9e12fd923f26576fc5e9e81038048eb998d4a12a7cd876749152c42e4c1ddeb6
-external:FLYOLOGY_RDF_EXAMPLES_LIBRARY_TYPE=default
-external:LIBRARY_TYPE=default
-profile:flyology_rdf_examples=DEVELOPMENT
-switches:flyology_rdf_examples=-Og,-fdata-sections,-ffunction-sections,-g,-gnatVa,-gnatW8,-gnatw.X,-gnatwa,-gnaty-d,-gnaty3,-gnatyA,-gnatyB,-gnatyI,-gnatyO,-gnatyS,-gnatya,-gnatyb,-gnatyc,-gnatye,-gnatyf,-gnatyh,-gnatyi,-gnatyk,-gnatyl,-gnatym,-gnatyn,-gnatyp,-gnatyr,-gnatyt,-gnatyu,-gnatyx

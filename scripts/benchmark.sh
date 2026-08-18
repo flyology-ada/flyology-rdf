@@ -15,6 +15,12 @@ results="$project_root/benchmark-results"
 rounds=${1:-7}
 label=${2:-latest}
 
+#  Measure the library a consumer gets. Without this the library builds in
+#  its default checked mode, at -O1 and with assertions on, and every
+#  number below would be timing the term invariants rather than the work.
+FLYOLOGY_RDF_BUILD_MODE=release
+export FLYOLOGY_RDF_BUILD_MODE
+
 mkdir -p "$results"
 cd "$project_root/benchmarks"
 "$alr" -n build
