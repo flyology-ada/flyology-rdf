@@ -215,15 +215,16 @@ Conformance, measured rather than claimed. Each harness reads the W3C
 manifests with this crate's own Turtle parser and reports what it examined,
 not a verdict:
 
-| Suite | Examined | Rejected valid | Accepted invalid | Wrong result |
-| --- | --- | --- | --- | --- |
-| RDF 1.1 and 1.2 | 1050 | **0** | **0** | **0** |
-| RDFC-1.0 canonicalization | 86 | — | — | **0** |
-| Notation3 syntax | 1070 | **0** | **0** | — |
-| SPARQL 1.1 syntax | 488 | **0** | **0** | — |
+| Suite | Corpus | Examined | Rejected valid | Accepted invalid | Wrong result | Writer |
+| --- | --- | --- | --- | --- | --- | --- |
+| RDF 1.1 and 1.2 | [w3c/rdf-tests](https://github.com/w3c/rdf-tests/tree/12774b0ebb385d17651b396654b19254d0fefbfa) | 1,050 | **0** | **0** | **0** | **0** |
+| RDFC-1.0 canonicalization | [w3c/rdf-canon](https://github.com/w3c/rdf-canon/tree/15619df2fda7a4ca88308733789b6774517f9638) | 86 | — | — | **0** | — |
+| Notation3 syntax | [w3c/N3](https://github.com/w3c/N3/tree/b975fc59ab5d2ad2d28e7206f1c34c716977d2ad) | 1,070 | **0** | **0** | — | **0** |
+| SPARQL 1.1 syntax | [w3c/rdf-tests](https://github.com/w3c/rdf-tests/tree/12774b0ebb385d17651b396654b19254d0fefbfa/sparql) | 488 | **0** | **0** | — | **0** |
 
-Corpora are pinned in `scripts/provision-oracles.sh`; the runs above are
-against those pins.
+Each corpus link is the revision the run used. The same commits are the
+defaults in `scripts/provision-oracles.sh`, so the table and the checkout
+cannot disagree without one of them being edited.
 
 Every document a suite accepts is also written back out and read again by
 this crate's own parser: 692 RDF entries compared by canonical form, 1,160
