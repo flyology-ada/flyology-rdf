@@ -211,6 +211,40 @@ provision_jena () {
    riot="$oracles/apache-jena-${jena_version}/bin/riot"
    [ -x "$riot" ] || die "riot not found at $riot after unpacking"
 
+   #  Fuseki is the same parser behind an HTTP server. riot pays a JVM
+   #  start per document; Fuseki pays one for the whole run, which is the
+   #  difference between asking it about everything and asking it only
+   #  about what the fast oracle could not answer.
+   fuseki="apache-jena-fuseki-${jena_version}.tar.gz"
+   fuseki_archive="$oracles/$fuseki"
+   if [ ! -f "$fuseki_archive" ]; then
+      note "fetching Fuseki ${jena_version}"
+      fetch "$jena_mirror/$fuseki" "$jena_archive_base/$fuseki" \
+            "$fuseki_archive"
+      if fetch "$jena_mirror/$fuseki.sha512" \
+               "$jena_archive_base/$fuseki.sha512" \
+               "$fuseki_archive.sha512"
+      then
+         expected=$(tr -d ' \n' < "$fuseki_archive.sha512" | tr 'A-Z' 'a-z')
+         expected=${expected##*=}
+         actual=$(shasum -a 512 "$fuseki_archive" 2>/dev/null | cut -d' ' -f1 \
+                  || sha512sum "$fuseki_archive" | cut -d' ' -f1)
+         case "$expected" in
+            *"$actual"*) note "Fuseki archive matches its published SHA-512" ;;
+            *) die "the Fuseki archive does not match its published SHA-512" ;;
+         esac
+      else
+         die "no published SHA-512 for $fuseki; refusing to install it"
+      fi
+      record_checksum "$fuseki_archive"
+   fi
+
+   if [ ! -d "$oracles/apache-jena-fuseki-${jena_version}" ]; then
+      note "unpacking Fuseki"
+      tar -xzf "$fuseki_archive" -C "$oracles"
+   fi
+   note "fuseki ready: $oracles/apache-jena-fuseki-${jena_version}"
+
    #  riot finds its runtime through JAVA_HOME, so record ours beside it
    #  rather than leaving the caller to guess.
    printf 'JAVA_HOME=%s\n' "$oracles/java" > "$oracles/jena.env"
