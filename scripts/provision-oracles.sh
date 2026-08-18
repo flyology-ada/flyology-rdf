@@ -11,20 +11,31 @@ set -eu
 #
 #  The two oracles need different mechanisms and the script does not pretend
 #  otherwise. Jena is published as a signed archive and needs a Java runtime,
-#  which cannot be provisioned here and is checked for instead. Oxigraph
-#  ships a self-contained binary.
+#  so the runtime is provisioned too -- a JRE that happens to be installed is
+#  a version nobody recorded, which is the thing this script exists to avoid.
+#  Oxigraph is built from source, because the differential test spawns it
+#  once per document and a container start per document is the difference
+#  between a minute and an hour.
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 oracles="$project_root/vendor/oracles"
 corpora="$project_root/tests/data"
 
 jena_version=${FLYOLOGY_RDF_JENA_VERSION:-6.2.0}
-jena_url=${FLYOLOGY_RDF_JENA_URL:-"https://downloads.apache.org/jena/binaries/apache-jena-${jena_version}.tar.gz"}
+
+#  downloads.apache.org carries only current releases, so a pin that is
+#  still good today stops resolving the day the next one ships. The archive
+#  keeps every release, and is the fallback rather than the primary because
+#  the mirror is the faster of the two while it has the file.
+jena_mirror=${FLYOLOGY_RDF_JENA_MIRROR:-"https://downloads.apache.org/jena/binaries"}
+jena_archive_base=${FLYOLOGY_RDF_JENA_ARCHIVE:-"https://archive.apache.org/dist/jena/binaries"}
+
+#  Temurin, for Jena. Pinned like everything else.
+java_major=${FLYOLOGY_RDF_JAVA_MAJOR:-21}
+java_version=${FLYOLOGY_RDF_JAVA_VERSION:-21.0.9_10}
+java_release=${FLYOLOGY_RDF_JAVA_RELEASE:-jdk-21.0.9%2B10}
 
 oxigraph_version=${FLYOLOGY_RDF_OXIGRAPH_VERSION:-0.4.11}
-oxigraph_image=${FLYOLOGY_RDF_OXIGRAPH_IMAGE:-"ghcr.io/oxigraph/oxigraph:${oxigraph_version}"}
-
-ldcli_version=${FLYOLOGY_RDF_LDCLI_VERSION:-1.0.3}
 
 #  w3c/rdf-tests carries the RDF syntax suites and the SPARQL suites
 #  together, so one checkout serves both harnesses.
@@ -34,12 +45,12 @@ n3_tests_commit=${FLYOLOGY_N3_TESTS_COMMIT:-b975fc59ab5d2ad2d28e7206f1c34c716977
 
 usage () {
    cat <<'USAGE'
-Usage: provision-oracles.sh [all|jena|oxigraph|ldcli|corpora|verify]
+Usage: provision-oracles.sh [all|java|jena|oxigraph|corpora|verify]
 
   all        provision everything (default)
-  jena       Apache Jena, for riot -- the primary parser oracle
-  oxigraph   oxigraph, for convert -- the secondary parser oracle
-  ldcli      ld-cli, for rdfc -- the RDFC-1.0 oracle
+  java       a Temurin JRE, which Jena needs
+  jena       Apache Jena, for riot -- the second parser oracle
+  oxigraph   oxigraph, for convert -- the first parser oracle
   corpora    the W3C rdf-tests (RDF and SPARQL), rdf-canon, and N3 suites
   verify     re-check what is already installed against its pins
 
@@ -73,36 +84,121 @@ check_checksum () {
       >/dev/null || die "$artifact does not match its recorded checksum"
 }
 
+#  Fetch from the mirror, falling back to the archive.
+fetch () {
+   url=$1
+   fallback=$2
+   target=$3
+   curl -fsSL "$url" -o "$target" 2>/dev/null \
+      || curl -fsSL "$fallback" -o "$target"
+}
+
+host_platform () {
+   case "$(uname -s)" in
+      Darwin) printf 'mac' ;;
+      Linux)  printf 'linux' ;;
+      *) die "no Temurin build for $(uname -s)" ;;
+   esac
+}
+
+host_arch () {
+   case "$(uname -m)" in
+      arm64|aarch64) printf 'aarch64' ;;
+      x86_64|amd64)  printf 'x64' ;;
+      *) die "no Temurin build for $(uname -m)" ;;
+   esac
+}
+
+#  The path to a java we provisioned, if there is one.
+provisioned_java () {
+   if [ -x "$oracles/java/bin/java" ]; then
+      printf '%s' "$oracles/java/bin/java"
+   fi
+}
+
+provision_java () {
+   need curl
+   mkdir -p "$oracles"
+
+   if [ -x "$oracles/java/bin/java" ]; then
+      note "java ready: $oracles/java/bin/java"
+      return
+   fi
+
+   platform=$(host_platform)
+   arch=$(host_arch)
+   archive="$oracles/OpenJDK${java_major}U-jre_${arch}_${platform}_hotspot_${java_version}.tar.gz"
+   base="https://github.com/adoptium/temurin${java_major}-binaries/releases/download/${java_release}"
+   name=$(basename -- "$archive")
+
+   if [ ! -f "$archive" ]; then
+      note "fetching Temurin ${java_version} for ${platform}/${arch}"
+      curl -fsSL "$base/$name" -o "$archive"
+      #  Adoptium publishes a .sha256.txt beside every asset.
+      if curl -fsSL "$base/$name.sha256.txt" -o "$archive.sha256.txt"; then
+         expected=$(cut -d' ' -f1 < "$archive.sha256.txt")
+         actual=$(shasum -a 256 "$archive" 2>/dev/null | cut -d' ' -f1 \
+                  || sha256sum "$archive" | cut -d' ' -f1)
+         [ "$expected" = "$actual" ] \
+            || die "the Temurin archive does not match its published SHA-256"
+         note "Temurin archive matches its published SHA-256"
+      else
+         die "no published SHA-256 for $name; refusing to install it"
+      fi
+      record_checksum "$archive"
+   fi
+
+   note "unpacking Temurin"
+   rm -rf "$oracles/java.unpack"
+   mkdir -p "$oracles/java.unpack"
+   tar -xzf "$archive" -C "$oracles/java.unpack"
+
+   #  macOS builds bury the runtime under Contents/Home; Linux does not.
+   home=$(find "$oracles/java.unpack" -type f -name java -path '*/bin/java' \
+          | head -n 1)
+   [ -n "$home" ] || die "the Temurin archive held no java"
+   home=$(cd "$(dirname -- "$home")/.." && pwd)
+   rm -rf "$oracles/java"
+   mv "$home" "$oracles/java"
+   rm -rf "$oracles/java.unpack"
+
+   [ -x "$oracles/java/bin/java" ] || die "java is not executable after unpacking"
+   note "java ready: $oracles/java/bin/java"
+}
+
 provision_jena () {
    need curl
-   #  Jena is a JVM application. This is the one prerequisite the script
-   #  cannot satisfy itself, so it fails loudly rather than half-installing.
-   if ! command -v java >/dev/null 2>&1; then
-      die "Jena needs a Java runtime (21 or later) on PATH; install one, or
-        set FLYOLOGY_RDF_SKIP_JENA=1 to run with oxigraph alone"
+
+   #  Jena is a JVM application, and the JVM is provisioned rather than
+   #  found: a runtime that happens to be installed is a version nobody
+   #  recorded, which is the thing this script exists to avoid.
+   java=$(provisioned_java)
+   if [ -z "$java" ]; then
+      provision_java
+      java=$(provisioned_java)
    fi
 
    mkdir -p "$oracles"
    archive="$oracles/apache-jena-${jena_version}.tar.gz"
+   name="apache-jena-${jena_version}.tar.gz"
 
    if [ ! -f "$archive" ]; then
       note "fetching Jena ${jena_version}"
-      curl -fsSL "$jena_url" -o "$archive"
-      #  Apache publishes .sha512 beside every release. Prefer it, and fall
-      #  back to recording what we received so that verify still means
-      #  something on a mirror that does not carry one.
-      if curl -fsSL "${jena_url}.sha512" -o "$archive.sha512" 2>/dev/null; then
-         expected=$(tr -d ' \n' < "$archive.sha512" | cut -d= -f2)
+      fetch "$jena_mirror/$name" "$jena_archive_base/$name" "$archive"
+      #  Apache publishes .sha512 beside every release, on both hosts.
+      if fetch "$jena_mirror/$name.sha512" \
+               "$jena_archive_base/$name.sha512" "$archive.sha512"
+      then
+         expected=$(tr -d ' \n' < "$archive.sha512" | tr 'A-Z' 'a-z')
+         expected=${expected##*=}
          actual=$(shasum -a 512 "$archive" 2>/dev/null | cut -d' ' -f1 \
                   || sha512sum "$archive" | cut -d' ' -f1)
          case "$expected" in
-            *"$actual"*|"") : ;;
-            *) [ "$expected" = "$actual" ] \
-                 || die "Jena archive does not match the published SHA-512" ;;
+            *"$actual"*) note "Jena archive matches its published SHA-512" ;;
+            *) die "the Jena archive does not match its published SHA-512" ;;
          esac
-         note "Jena archive matches the published SHA-512"
       else
-         warn "no published SHA-512 for this Jena URL; recording ours"
+         die "no published SHA-512 for $name; refusing to install it"
       fi
       record_checksum "$archive"
    fi
@@ -114,66 +210,29 @@ provision_jena () {
 
    riot="$oracles/apache-jena-${jena_version}/bin/riot"
    [ -x "$riot" ] || die "riot not found at $riot after unpacking"
+
+   #  riot finds its runtime through JAVA_HOME, so record ours beside it
+   #  rather than leaving the caller to guess.
+   printf 'JAVA_HOME=%s\n' "$oracles/java" > "$oracles/jena.env"
    note "riot ready: $riot"
+   note "  with JAVA_HOME=$oracles/java"
 }
 
 provision_oxigraph () {
-   #  A container digest is the strongest pin available for oxigraph and
-   #  matches how this ecosystem already pins Autobahn.
-   if command -v docker >/dev/null 2>&1; then
-      note "pulling $oxigraph_image"
-      docker pull "$oxigraph_image" >/dev/null
-      digest=$(docker image inspect --format '{{index .RepoDigests 0}}' \
-               "$oxigraph_image" 2>/dev/null || true)
-      mkdir -p "$oracles"
-      printf '%s\n' "${digest:-$oxigraph_image}" \
-         > "$oracles/oxigraph.pin"
-      note "oxigraph pinned: ${digest:-$oxigraph_image}"
-   elif command -v cargo >/dev/null 2>&1; then
-      note "no docker; building oxigraph-cli ${oxigraph_version} with cargo"
-      cargo install oxigraph-cli \
-         --version "$oxigraph_version" \
-         --root "$oracles/oxigraph" --locked
-      printf 'cargo oxigraph-cli %s\n' "$oxigraph_version" \
-         > "$oracles/oxigraph.pin"
-   else
-      die "oxigraph needs either docker or cargo"
+   #  A native binary, not a container: the differential test spawns this
+   #  once per document, and a container start per document is the
+   #  difference between a minute and an hour.
+   need cargo
+   if [ -x "$oracles/oxigraph/bin/oxigraph" ]; then
+      note "oxigraph ready: $oracles/oxigraph/bin/oxigraph"
+      return
    fi
-}
-
-provision_ldcli () {
-   need curl
-   need unzip
-   mkdir -p "$oracles"
-
-   case "$(uname -s)" in
-      Darwin) platform=macos-latest ;;
-      Linux)  platform=ubuntu-latest ;;
-      *) die "no ld-cli build for $(uname -s)" ;;
-   esac
-
-   archive="$oracles/ld-cli-${ldcli_version}-${platform}.zip"
-   url="https://github.com/filip26/ld-cli/releases/download/v${ldcli_version}/ld-cli-${ldcli_version}-${platform}.zip"
-
-   if [ ! -f "$archive" ]; then
-      note "fetching ld-cli ${ldcli_version} for ${platform}"
-      curl -fsSL "$url" -o "$archive"
-      record_checksum "$archive"
-   fi
-
-   if [ ! -d "$oracles/ld-cli-${ldcli_version}" ]; then
-      note "unpacking ld-cli"
-      mkdir -p "$oracles/ld-cli-${ldcli_version}"
-      unzip -q -o "$archive" -d "$oracles/ld-cli-${ldcli_version}"
-      find "$oracles/ld-cli-${ldcli_version}" -name 'ld-cli' -type f \
-         -exec chmod +x {} +
-   fi
-
-   #  ld-cli is a GraalVM native image, so unlike Jena it needs no runtime.
-   binary=$(find "$oracles/ld-cli-${ldcli_version}" -name 'ld-cli' -type f \
-            | head -n 1)
-   [ -n "$binary" ] || die "ld-cli binary not found after unpacking"
-   note "ld-cli ready: $binary"
+   note "building oxigraph-cli ${oxigraph_version}"
+   cargo install oxigraph-cli \
+      --version "$oxigraph_version" \
+      --root "$oracles/oxigraph" --locked
+   printf 'oxigraph-cli %s\n' "$oxigraph_version" > "$oracles/oxigraph.pin"
+   note "oxigraph ready: $oracles/oxigraph/bin/oxigraph"
 }
 
 provision_corpus () {
@@ -237,6 +296,8 @@ verify () {
    done
    [ -f "$oracles/oxigraph.pin" ] \
       && note "oxigraph pin: $(cat "$oracles/oxigraph.pin")"
+   [ -x "$oracles/java/bin/java" ] \
+      && note "java: $("$oracles/java/bin/java" -version 2>&1 | head -n 1)"
    for corpus in "$corpora"/w3c-*; do
       [ -d "$corpus/.git" ] || continue
       note "$(basename -- "$corpus") at $(git -C "$corpus" rev-parse HEAD)"
@@ -246,14 +307,13 @@ verify () {
 
 case "${1:-all}" in
    all)
-      [ "${FLYOLOGY_RDF_SKIP_JENA:-0}" = "1" ] || provision_jena
       provision_oxigraph
-      provision_ldcli
+      [ "${FLYOLOGY_RDF_SKIP_JENA:-0}" = "1" ] || provision_jena
       provision_corpora
       ;;
+   java)     provision_java ;;
    jena)     provision_jena ;;
    oxigraph) provision_oxigraph ;;
-   ldcli)    provision_ldcli ;;
    corpora)  provision_corpora ;;
    verify)   verify ;;
    -h|--help|help) usage ;;

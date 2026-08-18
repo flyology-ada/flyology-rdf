@@ -75,10 +75,11 @@ harness reads. Nothing is taken from the host: every artifact is pinned,
 verified, and installed under a gitignored directory, because a conformance
 number produced against an unrecorded version is not evidence.
 
-The script also provisions three independent implementations -- Jena,
-oxigraph and ld-cli -- for differential checking by hand. **No test invokes
-them**: the numbers below come from the W3C suites alone, and the IRI
-strictness gate is a recorded table rather than a live comparison.
+`./scripts/provision-oracles.sh` also provisions two independent
+implementations, oxigraph and Jena, and a pinned JRE for Jena to run on --
+because a runtime that happens to be installed is a version nobody
+recorded, which is the thing the script exists to avoid. The differential
+below runs against them; without them it skips and says so.
 
 ## Status
 
@@ -123,6 +124,44 @@ grammar alone admits — a projection that repeats a name, an AS that takes a
 name already in scope, a variable projected past a GROUP BY that dropped
 it, a blank node label spanning two basic graph patterns, a reifier or a
 list where RDF 1.2 does not allow one.
+
+## Differential testing
+
+The W3C suites are finite, curated, and graded against our own reading of
+them. The differential grades us against somebody else's code, and asks two
+questions of every corpus document this crate accepts.
+
+*Does the oracle read the document the way we do?* Its N-Quads are read back
+with our own reader and canonicalized, so blank node labels -- the one thing
+two conforming parsers may disagree about -- never enter the comparison.
+
+*Does the oracle read our serialization the way we wrote it?* That is the
+question the suites cannot ask. A writer bug that our own parser reads back
+symmetrically survives every round-trip test there is, because both halves
+share the misunderstanding. A foreign parser does not share it. The one
+serialization bug found so far -- tab, backspace and form feed written as
+numeric escapes where the canonical form names short ones -- was of exactly
+that shape, and it survived 23 hand-written checks.
+
+The two oracles are asked in order rather than both of everything. oxigraph
+is native and answers in milliseconds, but 0.4 implements RDF-star, the
+draft that preceded RDF 1.2, and reads `<< >>` as a quoted triple where RDF
+1.2 reads a reified triple; its answer there describes the older
+specification rather than either implementation, so it is not compared.
+Jena implements RDF 1.2 and costs half a second a document, which is too
+much for every document and right for the ones oxigraph could not answer.
+
+One oracle disagreeing is a lead, not a verdict. When one does, the other
+is asked, and if it agrees with us then the two oracles disagree with each
+other -- a fact about them, reported as contested rather than counted
+against us. Only a disagreement with no second opinion, or two oracles
+disagreeing together, fails the run. There is one contested case today:
+oxigraph 0.4 does not remove dot segments from an absolute IRI reference,
+where RFC 3986 §5.2.2 applies `remove_dot_segments` whether or not the
+reference carries its own scheme. Jena reads it as we do.
+
+Coverage: 2,443 documents seen, 2,081 accepted, and 2,049 of those had
+their serialization read back by a foreign parser. No writer divergence.
 
 ## Licence
 

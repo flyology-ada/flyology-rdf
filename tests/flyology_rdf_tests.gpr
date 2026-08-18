@@ -10,7 +10,7 @@ project Flyology_RDF_Tests is
       "cursor_tests.adb", "lexer_tests.adb", "parser_tests.adb",
       "serialization_tests.adb", "roundtrip_tests.adb",
       "canonicalization_tests.adb", "codec_tests.adb", "conformance.adb",
-      "canonicalization_conformance.adb");
+      "canonicalization_conformance.adb", "oracle_differential.adb");
    for Create_Missing_Dirs use "True";
 
    package Compiler is
