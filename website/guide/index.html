@@ -165,7 +165,7 @@ end Note;</code></pre></figure>
    RDF.Turtle_Parsers.Feed (Parser, Document (Index .. Index), Sink);
 end loop;
 Status := RDF.Turtle_Parsers.Finish (Parser, Sink);</code></pre></figure>
-            <p>The Notation3 and SPARQL conformance harnesses parse every document they accept twice, whole and one byte at a time, and require the two to agree: 1,160 Notation3 documents and 317 SPARQL queries in the current corpora. The RDF parser's own test suite parses each of its documents both ways. Those parsers take chunks through <a href="../n3-api/c04fff5ebdd2a4ccc28b12e6a905ffe2eb08b0410b146d69dce424b08939d076.html#af9b1e5b106fb18f3d9cf623547182b98bfa2372269d78723d793b2979e32f8c"><code>Flyology_N3.Parsers.Create</code></a> and <a href="../sparql-api/7992b11966d8a5352e097489907be665f33978ba70ca1895a789eadbeb5743b1.html#e0bc0a1d6cc72eb7e078fde3b2183c7157a9fce40cdbe2ce9204b487953d2694"><code>Flyology_SPARQL.Parsers.Create</code></a>, though they emit nothing as they read: a formula is a term and a query is a tree, and neither is usable until it closes.</p>
+            <p>The Notation3 and SPARQL conformance harnesses parse every document they accept twice, whole and one byte at a time, and require the two to agree: 1,160 Notation3 documents and 317 SPARQL queries in the current corpora. The RDF parser's own test suite parses each of its documents both ways. Those parsers take chunks through <a href="../n3-api/c04fff5ebdd2a4ccc28b12e6a905ffe2eb08b0410b146d69dce424b08939d076.html#8f8d1b4d7b963009129dcb2b2fba3a0017c21209688929f689d899c691130a98"><code>Flyology_N3.Parsers.Create</code></a> and <a href="../sparql-api/7992b11966d8a5352e097489907be665f33978ba70ca1895a789eadbeb5743b1.html#00061512b5bcf56a55c45523f16464a6f2d01b0a64f8a7a91391849d77f95805"><code>Flyology_SPARQL.Parsers.Create</code></a>, though they emit nothing as they read: a formula is a term and a query is a tree, and neither is usable until it closes.</p>
           </section>
 <section id="diagnostics">
             <span class="step-label">STEP 07</span>
@@ -283,7 +283,7 @@ Restored : constant RDF.Terms.Term :=
 <section id="n3">
             <span class="step-label">STEP 13</span>
             <h2>Read Notation3</h2>
-            <p>Notation3 expresses statements RDF cannot. A formula is a <a href="../n3-api/e9d199eb46a8c5a07fc447a1d8fc50290d697883c02f141c1220bd7a188fcf3f.html#ebd83464069585391e3feeba29818c1c903177a9c9aaa81e25f961db99ee134c"><code>Model.Term</code></a>, so a rule is an ordinary statement whose subject and object are formulas. <a href="../n3-api/c04fff5ebdd2a4ccc28b12e6a905ffe2eb08b0410b146d69dce424b08939d076.html#ba3c965ce23ae6bd9b915f4e9bac807fea4542650739e7ce6b902b29cfc4c977"><code>Flyology_N3.Parsers.Parse</code></a> reads a whole document.</p>
+            <p>Notation3 expresses statements RDF cannot. A formula is a <a href="../n3-api/e9d199eb46a8c5a07fc447a1d8fc50290d697883c02f141c1220bd7a188fcf3f.html#ebd83464069585391e3feeba29818c1c903177a9c9aaa81e25f961db99ee134c"><code>Model.Term</code></a>, so a rule is an ordinary statement whose subject and object are formulas. <a href="../n3-api/c04fff5ebdd2a4ccc28b12e6a905ffe2eb08b0410b146d69dce424b08939d076.html#3a3289f5353bdfb3e5a0faf73c029f8d602bd2c52d4a8f4d5cd8894023fb5585"><code>Flyology_N3.Parsers.Parse</code></a> reads a whole document.</p>
             <figure class="code-panel"><figcaption>a rule in Notation3</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Rule : constant Flyology_N3.Model.Term :=
   Flyology_N3.Parsers.Parse
     ("@prefix : &lt;http://example.org/&gt; ." &amp; ASCII.LF
@@ -308,7 +308,7 @@ end loop;</code></pre></figure>
 <section id="sparql">
             <span class="step-label">STEP 14</span>
             <h2>Read SPARQL</h2>
-            <p>The crate reads and writes queries back as documents through <a href="../sparql-api/7992b11966d8a5352e097489907be665f33978ba70ca1895a789eadbeb5743b1.html#047fccde3d8c2a00ee72986ed124b98df16e24a99b60e3b7da069520b8d6110d"><code>Flyology_SPARQL.Parsers.Parse</code></a> and <a href="../sparql-api/bbfa0024cae51d564f7a8699da6dcfcc9987e29cd42b4643395ad822a8f71d7c.html#1c3edd68b9657a9b273f78a23460846ed0ae8bd5caa0b479ed2c8940929f6bbf"><code>Flyology_SPARQL.Writers.To_SPARQL</code></a>. Nothing evaluates them: a query here is something to check, format or inspect.</p>
+            <p>The crate reads and writes queries back as documents through <a href="../sparql-api/7992b11966d8a5352e097489907be665f33978ba70ca1895a789eadbeb5743b1.html#059902c6ae5522f3866803161a6bd83bf204f61a6184bb09accfca3bb00e72d8"><code>Flyology_SPARQL.Parsers.Parse</code></a> and <a href="../sparql-api/bbfa0024cae51d564f7a8699da6dcfcc9987e29cd42b4643395ad822a8f71d7c.html#1c3edd68b9657a9b273f78a23460846ed0ae8bd5caa0b479ed2c8940929f6bbf"><code>Flyology_SPARQL.Writers.To_SPARQL</code></a>. Nothing evaluates them: a query here is something to check, format or inspect.</p>
             <figure class="code-panel"><figcaption>reading a query back out</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">Parsed : constant Flyology_SPARQL.Syntax.Query :=
   Flyology_SPARQL.Parsers.Parse (Text);
 begin

@@ -74,6 +74,13 @@ crates have one: `flyology_rdf` at `api/`, `flyology_n3` at `n3-api/`, and
 API entities include packages, generic packages, subprograms, types,
 objects, exceptions, enumeration literals, and other documented declarations.
 
+Anchors are hashes of the entity, so changing a subprogram's profile
+changes its anchor and breaks every link to it. `scripts/build-site.sh`
+reports that as a missing fragment target, naming two hashes and no
+entity. Run `node scripts/fix-api-links.mjs` after a build to repair it:
+it resolves each broken link by its own visible text and leaves working
+links alone, so an intended overload is never quietly swapped.
+
 - Follow document reading order. The first mention can occur in a hero,
   callout, paragraph, list, table, or figure caption.
 - Use `<a href="..."><code>Entity_Name</code></a>` for an identifier in prose.
