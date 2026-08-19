@@ -244,6 +244,31 @@ package body Flyology_RDF.Turtle_Parsers is
          return Unbounded.To_String (Into.Blank_Prefix) & Raw;
       end Document_Blank_Label;
 
+      --  Admission without a cache in front of it: the one place a
+      --  reference is handed to the IRI layer, shared by the cached
+      --  entries below so both fill their caches through the same door.
+      function Admit (Reference : String; What : Production_Kind)
+        return IRIs.IRI;
+
+      function Admit (Reference : String; What : Production_Kind)
+        return IRIs.IRI is
+      begin
+         return
+           (if Is_Line_Based (Into.Syntax_Data)
+              or else Into.Base_Data.Is_Empty
+            --  From_UTF_8 parses the reference to admit it, so asking
+            --  Is_Valid first parsed every IRI in the document twice.
+            --  The handler below turns its refusal into the same
+            --  diagnostic the pre-check raised, so the second parse
+            --  bought nothing.
+            then IRIs.From_UTF_8 (Reference)
+            else IRIs.Resolve (Into.Base_Data.Element, Reference));
+      exception
+         when IRIs.Invalid_IRI | IRIs.Invalid_UTF_8 =>
+            Reject (Invalid_IRI, What);
+            raise;
+      end Admit;
+
       function Resolve (Reference : String; What : Production_Kind)
         return IRIs.IRI;
 
@@ -260,39 +285,52 @@ package body Flyology_RDF.Turtle_Parsers is
          end;
 
          declare
-            Admitted : constant IRIs.IRI :=
-              (if Is_Line_Based (Into.Syntax_Data)
-                 or else Into.Base_Data.Is_Empty
-               --  From_UTF_8 parses the reference to admit it, so asking
-               --  Is_Valid first parsed every IRI in the document twice.
-               --  The handler below turns its refusal into the same
-               --  diagnostic the pre-check raised, so the second parse
-               --  bought nothing.
-               then IRIs.From_UTF_8 (Reference)
-               else IRIs.Resolve (Into.Base_Data.Element, Reference));
+            Admitted : constant IRIs.IRI := Admit (Reference, What);
          begin
             if Natural (Into.IRI_Cache.Length) < Maximum_Cached_IRIs then
                Into.IRI_Cache.Insert (Reference, Admitted);
             end if;
             return Admitted;
          end;
-      exception
-         when IRIs.Invalid_IRI | IRIs.Invalid_UTF_8 =>
-            Reject (Invalid_IRI, What);
-            raise;
       end Resolve;
 
       function Expand (Value : Lexers.Token) return IRIs.IRI;
 
       function Expand (Value : Lexers.Token) return IRIs.IRI is
-         Key : constant String := Lexers.Prefix (Value);
+         Key      : constant String := Lexers.Prefix (Value);
+         Position : constant Prefix_Binding_Maps.Cursor :=
+           Into.Prefixes.Find (Key);
       begin
-         if not Into.Prefixes.Contains (Key) then
+         if not Prefix_Binding_Maps.Has_Element (Position) then
             Reject (Undefined_Prefix, IRI_Production);
          end if;
-         return Resolve
-           (Into.Prefixes.Element (Key) & Lexers.Text (Value),
-            IRI_Production);
+
+         --  Cached under the binding and keyed by the local part alone,
+         --  so a repeated name neither rebuilds nor rehashes its
+         --  expansion. The concatenation and the admission happen once
+         --  per distinct local part per binding.
+         declare
+            Binding : Prefix_Binding renames
+              Into.Prefixes.Reference (Position);
+            Local   : constant String := Lexers.Text (Value);
+            Known   : constant IRI_Caches.Cursor := Binding.Cache.Find (Local);
+         begin
+            if IRI_Caches.Has_Element (Known) then
+               return IRI_Caches.Element (Known);
+            end if;
+
+            declare
+               Admitted : constant IRIs.IRI :=
+                 Admit (Unbounded.To_String (Binding.Expansion) & Local,
+                        IRI_Production);
+            begin
+               if Into.Prefixed_Cached < Maximum_Cached_IRIs then
+                  Binding.Cache.Insert (Local, Admitted);
+                  Into.Prefixed_Cached := Into.Prefixed_Cached + 1;
+               end if;
+               return Admitted;
+            end;
+         end;
       end Expand;
 
       procedure Emit
@@ -891,7 +929,9 @@ package body Flyology_RDF.Turtle_Parsers is
                      end if;
                      Into.Prefixes.Include
                        (Unbounded.To_String (Name),
-                        IRIs.To_UTF_8 (Target_IRI));
+                        (Expansion => Unbounded.To_Unbounded_String
+                           (IRIs.To_UTF_8 (Target_IRI)),
+                         Cache     => IRI_Caches.Empty_Map));
                   end;
 
                   if Terminated then

@@ -319,6 +319,25 @@ private
       Hash            => Ada.Strings.Hash,
       Equivalent_Keys => "=");
 
+   --  One bound prefix: its admitted absolute expansion, and the IRIs
+   --  already admitted through it, keyed by local part. Keying this cache
+   --  under the binding makes its lifetime the binding's lifetime, so
+   --  redefining a prefix retires every entry admitted under the old
+   --  expansion with the record that held them. A base change retires
+   --  nothing here: the expansion was resolved to an absolute IRI when
+   --  the directive was read, and a reference that carries its scheme
+   --  resolves the same way against any base.
+   type Prefix_Binding is record
+      Expansion : Unbounded.Unbounded_String;
+      Cache     : IRI_Caches.Map;
+   end record;
+
+   package Prefix_Binding_Maps is new Ada.Containers.Indefinite_Hashed_Maps
+     (Key_Type        => String,
+      Element_Type    => Prefix_Binding,
+      Hash            => Ada.Strings.Hash,
+      Equivalent_Keys => "=");
+
    package Label_Sets is new Ada.Containers.Indefinite_Ordered_Sets
      (Element_Type => String);
 
@@ -364,7 +383,12 @@ private
       Second_Kind     : Lexers.Token_Kind := Lexers.Dot_Token;
       First_Is_Terminated_Version : Boolean := False;
 
-      Prefixes        : Prefix_Maps.Map;
+      Prefixes        : Prefix_Binding_Maps.Map;
+
+      --  Entries held across every per-prefix cache, so the bound on
+      --  retained admissions stays one number however many prefixes a
+      --  document binds.
+      Prefixed_Cached : Natural := 0;
       Current_Graph   : Unbounded.Unbounded_String;
       Graph_Is_Named  : Boolean := False;
       Graph_Is_Blank  : Boolean := False;
