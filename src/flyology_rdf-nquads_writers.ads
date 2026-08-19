@@ -34,6 +34,24 @@ package Flyology_RDF.NQuads_Writers is
    --  @param Value Quad to serialize
    --  @param Style How to render an xsd:string datatype
    --  @return The statement in N-Quads syntax
+   --  Append the N-Quads form of Value to Buffer, moving Last past what
+   --  was written.
+   --
+   --  The function form below builds the whole statement as one string
+   --  before returning it, which a caller writing to a file then copies
+   --  again. This writes into the caller's own buffer, so a conversion
+   --  that streams pays for neither.
+   --  @param Value Statement to write
+   --  @param Buffer Destination, written from Last + 1 onwards
+   --  @param Last Index of the last character written, extended in place
+   --  @param Style How to write an xsd:string datatype
+   --  @exception Constraint_Error Buffer has no room for the statement
+   procedure Put_Quad
+     (Value  : Quads.Quad;
+      Buffer : in out String;
+      Last   : in out Natural;
+      Style  : String_Datatype_Style := Explicit_Datatype);
+
    function Write_Quad
      (Value : Quads.Quad;
       Style : String_Datatype_Style := Explicit_Datatype) return String;

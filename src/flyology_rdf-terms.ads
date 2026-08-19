@@ -1,4 +1,3 @@
-private with Ada.Containers.Vectors;
 private with Ada.Finalization;
 private with System;
 private with System.Atomic_Counters;
@@ -296,10 +295,6 @@ private
       end case;
    end record;
 
-   package Term_Node_Vectors is new Ada.Containers.Vectors
-     (Index_Type   => Positive,
-      Element_Type => Term_Node);
-
    --  The nodes are shared and reference counted rather than held by
    --  value. A term is immutable once built, and it is copied constantly:
    --  into a triple, into a quad, out to a consumer. Holding the vector
@@ -309,9 +304,14 @@ private
    --  The count is atomic for the same reason the holders in the parent
    --  package use an atomic one: copying a term must be safe from several
    --  tasks, even though the nodes it shares are never mutated.
-   type Node_Store is limited record
+   type Node_Array is array (Positive range <>) of Term_Node;
+
+   --  Sized on creation rather than grown. Every constructor knows how
+   --  many nodes it is about to write, so the count and the nodes are one
+   --  allocation instead of a store pointing at a vector's own array.
+   type Node_Store (Count : Positive) is limited record
       References : System.Atomic_Counters.Atomic_Counter;
-      Items      : Term_Node_Vectors.Vector;
+      Items      : Node_Array (1 .. Count);
    end record;
 
    type Node_Store_Access is access Node_Store;

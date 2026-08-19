@@ -115,35 +115,96 @@ package body Flyology_RDF.Lexers is
    --  Encoding a scalar back into the token's decoded text
    ----------------------------------------------------------------------
 
+   --  Appending to held text: into the token while it fits, and to the
+   --  heap once it does not.
+   procedure Append (Target : in out Held_Text; Item : Character);
+   procedure Append (Target : in out Held_Text; Item : String);
+   function Value (Target : Held_Text) return String;
+   function Length (Target : Held_Text) return Natural;
+   procedure Truncate (Target : in out Held_Text; Keep : Natural);
+   procedure Clear (Target : in out Held_Text);
+
+   procedure Append (Target : in out Held_Text; Item : Character) is
+   begin
+      if Target.Spilled then
+         Unbounded.Append (Target.Spill, Item);
+      elsif Target.Count < Target.Capacity then
+         Target.Count := Target.Count + 1;
+         Target.Fixed (Target.Count) := Item;
+      else
+         Target.Spill :=
+           Unbounded.To_Unbounded_String (Target.Fixed (1 .. Target.Count));
+         Unbounded.Append (Target.Spill, Item);
+         Target.Spilled := True;
+      end if;
+   end Append;
+
+   procedure Append (Target : in out Held_Text; Item : String) is
+   begin
+      if Target.Spilled then
+         Unbounded.Append (Target.Spill, Item);
+      elsif Target.Count + Item'Length <= Target.Capacity then
+         Target.Fixed (Target.Count + 1 .. Target.Count + Item'Length) :=
+           Item;
+         Target.Count := Target.Count + Item'Length;
+      else
+         Target.Spill :=
+           Unbounded.To_Unbounded_String (Target.Fixed (1 .. Target.Count));
+         Unbounded.Append (Target.Spill, Item);
+         Target.Spilled := True;
+      end if;
+   end Append;
+
+   function Value (Target : Held_Text) return String is
+     (if Target.Spilled
+      then Unbounded.To_String (Target.Spill)
+      else Target.Fixed (1 .. Target.Count));
+
+   function Length (Target : Held_Text) return Natural is
+     (if Target.Spilled
+      then Unbounded.Length (Target.Spill)
+      else Target.Count);
+
+   --  Give back everything past Keep characters, which is how a scan
+   --  that ran ahead and then had to back up restores what it had.
+   procedure Truncate (Target : in out Held_Text; Keep : Natural) is
+   begin
+      if Target.Spilled then
+         Target.Spill := Unbounded.Head (Target.Spill, Keep);
+      else
+         Target.Count := Natural'Min (Target.Count, Keep);
+      end if;
+   end Truncate;
+
+   procedure Clear (Target : in out Held_Text) is
+   begin
+      Target.Count := 0;
+      Target.Spilled := False;
+      Target.Spill := Unbounded.Null_Unbounded_String;
+   end Clear;
+
    procedure Append_Scalar
-     (Buffer : in out Unbounded.Unbounded_String;
+     (Buffer : in out Held_Text;
       Scalar : Scalar_Value);
 
    procedure Append_Scalar
-     (Buffer : in out Unbounded.Unbounded_String;
+     (Buffer : in out Held_Text;
       Scalar : Scalar_Value) is
    begin
       if Scalar < 16#80# then
-         Unbounded.Append (Buffer, Character'Val (Scalar));
+         Append (Buffer, Character'Val (Scalar));
       elsif Scalar < 16#800# then
-         Unbounded.Append (Buffer, Character'Val (16#C0# + Scalar / 64));
-         Unbounded.Append
-           (Buffer, Character'Val (16#80# + Scalar mod 64));
+         Append (Buffer, Character'Val (16#C0# + Scalar / 64));
+         Append (Buffer, Character'Val (16#80# + Scalar mod 64));
       elsif Scalar < 16#1_0000# then
-         Unbounded.Append (Buffer, Character'Val (16#E0# + Scalar / 4096));
-         Unbounded.Append
-           (Buffer, Character'Val (16#80# + (Scalar / 64) mod 64));
-         Unbounded.Append
-           (Buffer, Character'Val (16#80# + Scalar mod 64));
+         Append (Buffer, Character'Val (16#E0# + Scalar / 4096));
+         Append (Buffer, Character'Val (16#80# + (Scalar / 64) mod 64));
+         Append (Buffer, Character'Val (16#80# + Scalar mod 64));
       else
-         Unbounded.Append
-           (Buffer, Character'Val (16#F0# + Scalar / 262144));
-         Unbounded.Append
-           (Buffer, Character'Val (16#80# + (Scalar / 4096) mod 64));
-         Unbounded.Append
-           (Buffer, Character'Val (16#80# + (Scalar / 64) mod 64));
-         Unbounded.Append
-           (Buffer, Character'Val (16#80# + Scalar mod 64));
+         Append (Buffer, Character'Val (16#F0# + Scalar / 262144));
+         Append (Buffer, Character'Val (16#80# + (Scalar / 4096) mod 64));
+         Append (Buffer, Character'Val (16#80# + (Scalar / 64) mod 64));
+         Append (Buffer, Character'Val (16#80# + Scalar mod 64));
       end if;
    end Append_Scalar;
 
@@ -151,13 +212,29 @@ package body Flyology_RDF.Lexers is
    --  Accessors
    ----------------------------------------------------------------------
 
+   --  The same for the few scratch buffers that are not a token's own
+   --  text and so have nothing to gain from being held inline.
+   procedure Append_Scalar
+     (Buffer : in out Unbounded.Unbounded_String;
+      Scalar : Scalar_Value);
+
+   procedure Append_Scalar
+     (Buffer : in out Unbounded.Unbounded_String;
+      Scalar : Scalar_Value)
+   is
+      Held : Token_Text;
+   begin
+      Append_Scalar (Held, Scalar);
+      Unbounded.Append (Buffer, Value (Held));
+   end Append_Scalar;
+
    function Kind (Value : Token) return Token_Kind is (Value.Kind_Value);
 
    function Text (Value : Token) return String
-   is (Unbounded.To_String (Value.Text_Value));
+   is (Lexers.Value (Value.Text_Value));
 
    function Prefix (Value : Token) return String
-   is (Unbounded.To_String (Value.Prefix_Value));
+   is (Lexers.Value (Value.Prefix_Value));
 
    function Form (Value : Token) return String_Form is (Value.Form_Value);
 
@@ -183,8 +260,8 @@ package body Flyology_RDF.Lexers is
       use type Unbounded.Unbounded_String;
    begin
       return Left.Kind_Value = Right.Kind_Value
-        and then Left.Text_Value = Right.Text_Value
-        and then Left.Prefix_Value = Right.Prefix_Value
+        and then Value (Left.Text_Value) = Value (Right.Text_Value)
+        and then Value (Left.Prefix_Value) = Value (Right.Prefix_Value)
         and then Left.Form_Value = Right.Form_Value
         and then Left.Quote_Value = Right.Quote_Value
         and then Left.Has_Direction_Data = Right.Has_Direction_Data
@@ -213,8 +290,11 @@ package body Flyology_RDF.Lexers is
       Start_Position_Value : Cursors.Cursor_State;
       Start_Index          : Positive;
 
-      Buffer : Unbounded.Unbounded_String;
-      Prefix_Buffer : Unbounded.Unbounded_String;
+      --  The token's text is built where it will live. Building it in a
+      --  local and handing that to the aggregate below allocated the
+      --  characters a second time for every token that carries any.
+      Buffer        : Token_Text renames Result.Text_Value;
+      Prefix_Buffer : Token_Prefix renames Result.Prefix_Value;
 
       Scalar : Scalar_Value;
       Length : Natural;
@@ -232,17 +312,11 @@ package body Flyology_RDF.Lexers is
 
       procedure Emit (Which : Token_Kind) is
       begin
-         Result :=
-           (Initialized        => True,
-            Kind_Value         => Which,
-            Text_Value         => Buffer,
-            Prefix_Value       => Prefix_Buffer,
-            Form_Value         => Result.Form_Value,
-            Quote_Value        => Result.Quote_Value,
-            Has_Direction_Data => Result.Has_Direction_Data,
-            Direction_Data     => Result.Direction_Data,
-            Start_Value        => Start_Position_Value,
-            End_Value          => Walk_Position);
+         --  Every other component is already where it belongs: the text
+         --  was built in place and the rest was set as it was scanned.
+         Result.Kind_Value := Which;
+         Result.Start_Value := Start_Position_Value;
+         Result.End_Value := Walk_Position;
          Position := Walk_Position;
          Index := Walk_Index;
          Status := Token_Found;
@@ -366,8 +440,7 @@ package body Flyology_RDF.Lexers is
          procedure Flush_Run is
          begin
             if Walk_Index > Run_Start then
-               Unbounded.Append
-                 (Buffer, Text (Run_Start .. Walk_Index - 1));
+               Append (Buffer, Text (Run_Start .. Walk_Index - 1));
             end if;
          end Flush_Run;
       begin
@@ -429,8 +502,7 @@ package body Flyology_RDF.Lexers is
          procedure Flush_Run is
          begin
             if Walk_Index > Run_Start then
-               Unbounded.Append
-                 (Buffer, Text (Run_Start .. Walk_Index - 1));
+               Append (Buffer, Text (Run_Start .. Walk_Index - 1));
             end if;
          end Flush_Run;
       begin
@@ -666,8 +738,7 @@ package body Flyology_RDF.Lexers is
                   Inner          : Peek_Status;
                begin
                   if Walk_Index > Run_Start then
-                     Unbounded.Append
-                       (Buffer, Text (Run_Start .. Walk_Index - 1));
+                     Append (Buffer, Text (Run_Start .. Walk_Index - 1));
                   end if;
                   Step (Scalar, Length);
                   Peek (Text, Walk_Index, Escaped, Escaped_Length, Inner);
@@ -723,7 +794,7 @@ package body Flyology_RDF.Lexers is
          Walk_Position := Good_Position;
          Walk_Index := Good_Index;
          if Good_Index > Run_Start then
-            Unbounded.Append (Buffer, Text (Run_Start .. Good_Index - 1));
+            Append (Buffer, Text (Run_Start .. Good_Index - 1));
          end if;
          Emit (Prefixed_Name_Token);
       end Scan_Local_Name;
@@ -928,7 +999,7 @@ package body Flyology_RDF.Lexers is
          --  directive reading applies only when the word stands alone.
          if Scalar /= 16#2D# then
             declare
-               Word : constant String := Unbounded.To_String (Buffer);
+               Word : constant String := Lexers.Value (Buffer);
             begin
                if Word = "prefix" then
                   Emit (Prefix_Directive_Token);
@@ -940,7 +1011,8 @@ package body Flyology_RDF.Lexers is
                   --  Turtle 1.2 has both "@version" and the keyword form.
                   --  Marking which was written lets the grammar require the
                   --  terminator that only the at-form carries.
-                  Buffer := Unbounded.To_Unbounded_String ("@version");
+                  Clear (Buffer);
+                  Append (Buffer, "@version");
                   Emit (Version_Directive_Token);
                   return;
                elsif Dialect = N3_Dialect
@@ -1097,7 +1169,7 @@ package body Flyology_RDF.Lexers is
             if Scalar = 16#2E# then
                Good_Position := Walk_Position;
                Good_Index := Walk_Index;
-               Good_Length := Unbounded.Length (Buffer);
+               Good_Length := Lexers.Length (Buffer);
                Append_Scalar (Buffer, Scalar);
                Step (Scalar, Length);
 
@@ -1112,7 +1184,7 @@ package body Flyology_RDF.Lexers is
                if not Is_PN_Chars (Scalar) and then Scalar /= 16#2E# then
                   Walk_Position := Good_Position;
                   Walk_Index := Good_Index;
-                  Unbounded.Head (Buffer, Good_Length);
+                  Truncate (Buffer, Good_Length);
                   exit;
                end if;
             else
@@ -1134,15 +1206,15 @@ package body Flyology_RDF.Lexers is
          end if;
 
          if Scalar = 16#3A# then              --  ':' -- a prefixed name
-            Prefix_Buffer := Buffer;
-            Buffer := Unbounded.Null_Unbounded_String;
+            Append (Prefix_Buffer, Lexers.Value (Buffer));
+            Clear (Buffer);
             Step (Scalar, Length);
             Scan_Local_Name;
             return;
          end if;
 
          declare
-            Word  : constant String := Unbounded.To_String (Buffer);
+            Word  : constant String := Lexers.Value (Buffer);
             Upper : constant String :=
               Ada.Characters.Handling.To_Upper (Word);
          begin
@@ -1418,7 +1490,7 @@ package body Flyology_RDF.Lexers is
             Scan_Local_Name (Blank_Label => True);
             if Status = Token_Found then
                if Dialect /= N3_Dialect
-                 and then Unbounded.Length (Result.Text_Value) = 0
+                 and then Lexers.Length (Result.Text_Value) = 0
                then
                   --  "_:" with no label character names nothing -- except
                   --  in N3, which reads it as an unnamed existential.
@@ -1426,7 +1498,7 @@ package body Flyology_RDF.Lexers is
                   return;
                end if;
                Result.Kind_Value := Blank_Label_Token;
-               Result.Prefix_Value := Unbounded.Null_Unbounded_String;
+               Clear (Result.Prefix_Value);
             end if;
 
          when 16#3A# =>                       --  ':' -- empty prefix

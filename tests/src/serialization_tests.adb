@@ -278,6 +278,47 @@ begin
       Check (Datasets.Graph_Count (Forward) = 2, "across two graphs");
    end;
 
+   ------------------------------------------------------------------
+   --  The buffer-writing form must agree with the string-returning one
+   ------------------------------------------------------------------
+   --  Put_Quad exists so a caller that streams need not have every
+   --  statement built and then copied. It is a second implementation of
+   --  the same grammar, and two implementations of one grammar disagree
+   --  unless something makes them agree. Nothing did: a defect that lost
+   --  the opening bracket of every IRI passed every test here, because
+   --  every test here called the other one.
+   declare
+      procedure Same (Value : Quads.Quad; Label : String);
+
+      procedure Same (Value : Quads.Quad; Label : String) is
+         Buffer : String (1 .. 4096);
+         Last   : Natural := 0;
+      begin
+         Writers.Put_Quad (Value, Buffer, Last);
+         Check_Equal (Buffer (1 .. Last), Writers.Write_Quad (Value), Label);
+      end Same;
+   begin
+      Same (Quads.Create (Quads.Default_Graph, T (Alice), I (Knows),
+                          T (Bob)),
+            "Put_Quad agrees on a default-graph statement");
+      Same (Quads.Create (Quads.IRI_Graph (I (Graph)), T (Alice), I (Knows),
+                          T (Bob)),
+            "Put_Quad agrees on a named-graph statement");
+      Same (Quads.Create (Quads.Default_Graph, Terms.Blank_Node ("b0"),
+                          I (Knows), Terms.Blank_Node ("b1")),
+            "Put_Quad agrees on blank nodes");
+      Same (Quads.Create (Quads.Default_Graph, T (Alice), I (Knows),
+                          Terms.Literal ("a ""quoted"" value" & ASCII.LF, I (XSD_String))),
+            "Put_Quad agrees on a literal needing escapes");
+      Same (Quads.Create (Quads.Default_Graph, T (Alice), I (Knows),
+                          Terms.Language_Literal ("chat", "fr")),
+            "Put_Quad agrees on a language literal");
+      Same (Quads.Create
+              (Quads.Default_Graph, T (Alice), I (Knows),
+               Terms.Triple_Term (T (Alice), I (Knows), T (Bob))),
+            "Put_Quad agrees on a triple term");
+   end;
+
    IO.Put_Line ("  checks              " & Checks'Image);
    IO.Put_Line ("  failures            " & Failures'Image);
 

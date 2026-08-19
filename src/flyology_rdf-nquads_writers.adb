@@ -170,6 +170,142 @@ package body Flyology_RDF.NQuads_Writers is
       return Write_Term (Quads.Name_Term (Value));
    end Write_Graph_Name;
 
+   --  Writing a statement into the caller's buffer, one piece at a time.
+   --  Every step below has a function form above that returns a String;
+   --  those build the piece, hand it back, and have it copied in. These
+   --  write it where it belongs, which for a conversion that streams is
+   --  the difference between two copies of every statement and none.
+
+   procedure Put (Buffer : in out String; Last : in out Natural;
+                  Item : String);
+
+   procedure Put (Buffer : in out String; Last : in out Natural;
+                  Item : String) is
+   begin
+      Buffer (Last + 1 .. Last + Item'Length) := Item;
+      Last := Last + Item'Length;
+   end Put;
+
+   procedure Put_Escape_16 (Buffer : in out String; Last : in out Natural;
+                            Code : Natural);
+
+   procedure Put_Escape_16 (Buffer : in out String; Last : in out Natural;
+                            Code : Natural) is
+   begin
+      Put (Buffer, Last, "\u");
+      Put (Buffer, Last, (1 => Hex_Digits (Code / 4096 + 1)));
+      Put (Buffer, Last, (1 => Hex_Digits ((Code / 256) mod 16 + 1)));
+      Put (Buffer, Last, (1 => Hex_Digits ((Code / 16) mod 16 + 1)));
+      Put (Buffer, Last, (1 => Hex_Digits (Code mod 16 + 1)));
+   end Put_Escape_16;
+
+   procedure Put_IRI (Buffer : in out String; Last : in out Natural;
+                      Value : IRIs.IRI);
+
+   procedure Put_IRI (Buffer : in out String; Last : in out Natural;
+                      Value : IRIs.IRI)
+   is
+      Text : constant String := IRIs.To_UTF_8 (Value);
+   begin
+      Put (Buffer, Last, "<");
+      --  Almost every IRI needs nothing escaped, and for those this is one
+      --  block move rather than a decision per byte.
+      if (for all Item of Text => not Escapes_In_IRI (Item)) then
+         Put (Buffer, Last, Text);
+      else
+         for Item of Text loop
+            if Escapes_In_IRI (Item) then
+               Put_Escape_16 (Buffer, Last, Character'Pos (Item));
+            else
+               Last := Last + 1;
+               Buffer (Last) := Item;
+            end if;
+         end loop;
+      end if;
+      Put (Buffer, Last, ">");
+   end Put_IRI;
+
+   procedure Put_Term (Buffer : in out String; Last : in out Natural;
+                       Value : Terms.Term; Style : String_Datatype_Style);
+
+   procedure Put_Term (Buffer : in out String; Last : in out Natural;
+                       Value : Terms.Term; Style : String_Datatype_Style) is
+   begin
+      case Terms.Kind (Value) is
+         when Terms.IRI_Kind =>
+            Put_IRI (Buffer, Last, Terms.IRI_Value (Value));
+
+         when Terms.Blank_Node_Kind =>
+            Put (Buffer, Last, "_:");
+            Put (Buffer, Last, Terms.Label (Value));
+
+         when Terms.Literal_Kind =>
+            Put (Buffer, Last, """");
+            declare
+               Lexical : constant String := Terms.Lexical_Form (Value);
+            begin
+               if (for all Item of Lexical =>
+                     not Escapes_In_Literal (Item))
+               then
+                  Put (Buffer, Last, Lexical);
+               else
+                  Put (Buffer, Last, Escape_Literal (Lexical));
+               end if;
+            end;
+            Put (Buffer, Last, """");
+
+            if Terms.Has_Language (Value) then
+               Put (Buffer, Last, "@");
+               Put (Buffer, Last, Terms.Language (Value));
+               if Terms.Has_Direction (Value) then
+                  Put (Buffer, Last,
+                       (if Terms.Direction (Value) = Terms.Left_To_Right
+                        then "--ltr" else "--rtl"));
+               end if;
+            else
+               declare
+                  Datatype : constant IRIs.IRI := Terms.Datatype (Value);
+               begin
+                  if Style /= Implicit_Datatype
+                    or else IRIs.To_UTF_8 (Datatype) /= XSD_String
+                  then
+                     Put (Buffer, Last, "^^");
+                     Put_IRI (Buffer, Last, Datatype);
+                  end if;
+               end;
+            end if;
+
+         when Terms.Triple_Term_Kind =>
+            Put (Buffer, Last, "<<(");
+            Put_Term (Buffer, Last, Terms.Triple_Subject (Value), Style);
+            Put (Buffer, Last, " ");
+            Put_IRI (Buffer, Last, Terms.Triple_Predicate (Value));
+            Put (Buffer, Last, " ");
+            Put_Term (Buffer, Last, Terms.Triple_Object (Value), Style);
+            Put (Buffer, Last, ")>>");
+      end case;
+   end Put_Term;
+
+   procedure Put_Quad
+     (Value  : Quads.Quad;
+      Buffer : in out String;
+      Last   : in out Natural;
+      Style  : String_Datatype_Style := Explicit_Datatype)
+   is
+      Graph : constant Quads.Graph_Name := Quads.Graph (Value);
+   begin
+      Put_Term (Buffer, Last, Quads.Subject (Value), Style);
+      Put (Buffer, Last, " ");
+      Put_IRI (Buffer, Last, Quads.Predicate (Value));
+      Put (Buffer, Last, " ");
+      Put_Term (Buffer, Last, Quads.Object (Value), Style);
+      if Quads.Kind (Graph) /= Quads.Default_Graph_Kind then
+         Put (Buffer, Last, " ");
+         Put_Term (Buffer, Last, Quads.Name_Term (Graph), Style);
+      end if;
+      Put (Buffer, Last, " .");
+   end Put_Quad;
+
    function Write_Quad
      (Value : Quads.Quad;
       Style : String_Datatype_Style := Explicit_Datatype) return String
