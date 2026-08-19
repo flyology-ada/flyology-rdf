@@ -310,9 +310,14 @@ private
       Equivalent_Keys => "=",
       "="             => IRIs."=");
 
-   package Prefix_Maps is new Ada.Containers.Indefinite_Ordered_Maps
-     (Key_Type     => String,
-      Element_Type => String);
+   --  Hashed rather than ordered. Every prefixed name in a document looks
+   --  its prefix up, and an ordered map answers that by walking a tree and
+   --  comparing strings at each step. Nothing here needs the ordering.
+   package Prefix_Maps is new Ada.Containers.Indefinite_Hashed_Maps
+     (Key_Type        => String,
+      Element_Type    => String,
+      Hash            => Ada.Strings.Hash,
+      Equivalent_Keys => "=");
 
    package Label_Sets is new Ada.Containers.Indefinite_Ordered_Sets
      (Element_Type => String);

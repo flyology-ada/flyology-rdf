@@ -159,8 +159,15 @@ package body Flyology_RDF.Terms is
       end if;
    end Finalize;
 
+   --  How the nodes are reached, whichever way this term holds them.
+   function Held_Count (Value : Term) return Positive is
+     (if Value.Store = null then 1 else Value.Store.Count);
+
+   function Item (Value : Term; Index : Positive) return Term_Node is
+     (if Value.Store = null then Value.Solo else Value.Store.Items (Index));
+
    function Root (Value : Term) return Term_Node is
-     (Value.Store.Items (Value.Store.Count));
+     (Item (Value, Held_Count (Value)));
 
    procedure Require_Kind (Value : Term; Expected : Term_Kind) is
    begin
@@ -189,8 +196,7 @@ package body Flyology_RDF.Terms is
    function Single (Node : Term_Node) return Term is
       Result : Term;
    begin
-      Result.Store := new Node_Store'(Count => 1, References => <>,
-                                      Items => (1 => Node));
+      Result.Solo := Node;
       return Result;
    end Single;
 
@@ -326,8 +332,8 @@ package body Flyology_RDF.Terms is
       Object    : Term) return Term
    is
       Subject_Count : constant Positive :=
-        Subject.Store.Count;
-      Object_Count  : constant Positive := Object.Store.Count;
+        Held_Count (Subject);
+      Object_Count  : constant Positive := Held_Count (Object);
       Total         : constant Natural := Subject_Count + Object_Count + 1;
 
       Result_Depth : constant Natural :=
@@ -355,11 +361,13 @@ package body Flyology_RDF.Terms is
       --  renumbered as it is copied across.
       Result.Store := new Node_Store (Count => Total);
 
-      Result.Store.Items (1 .. Subject_Count) := Subject.Store.Items;
+      for Offset in 1 .. Subject_Count loop
+         Result.Store.Items (Offset) := Item (Subject, Offset);
+      end loop;
 
       for Offset in 1 .. Object_Count loop
          declare
-            Node  : constant Term_Node := Object.Store.Items (Offset);
+            Node  : constant Term_Node := Item (Object, Offset);
             Where : constant Positive := Subject_Count + Offset;
          begin
             if Node.Variant = Triple_Term_Kind then
@@ -454,7 +462,7 @@ package body Flyology_RDF.Terms is
    function Subtree (Value : Term; Index : Positive) return Term;
 
    function Subtree (Value : Term; Index : Positive) return Term is
-      Node   : constant Term_Node := Value.Store.Items (Index);
+      Node   : constant Term_Node := Item (Value, Index);
       First  : constant Positive := Index - Node.Subtree_Size + 1;
       Offset : constant Natural := First - 1;
       Result : Term;
@@ -463,7 +471,7 @@ package body Flyology_RDF.Terms is
 
       for Position in First .. Index loop
          declare
-            Current : Term_Node := Value.Store.Items (Position);
+            Current : Term_Node := Item (Value, Position);
          begin
             if Current.Variant = Triple_Term_Kind then
                Current.Subject_Node := Current.Subject_Node - Offset;
@@ -494,7 +502,7 @@ package body Flyology_RDF.Terms is
    end Triple_Object;
 
    function Node_Count (Value : Term) return Positive is
-     (Value.Store.Count);
+     (Held_Count (Value));
 
    function Depth (Value : Term) return Natural is
      (Root (Value).Subtree_Depth);
@@ -518,9 +526,9 @@ package body Flyology_RDF.Terms is
          Predicate          : IRIs.IRI;
          Object_Node        : Node_ID)) return Node_ID is
    begin
-      for Index in 1 .. Value.Store.Count loop
+      for Index in 1 .. Held_Count (Value) loop
          declare
-            Node : constant Term_Node := Value.Store.Items (Index);
+            Node : constant Term_Node := Item (Value, Index);
             Here : constant Node_ID := Node_ID (Index);
          begin
             case Node.Variant is
@@ -546,7 +554,7 @@ package body Flyology_RDF.Terms is
             end case;
          end;
       end loop;
-      return Node_ID (Value.Store.Count);
+      return Node_ID (Held_Count (Value));
    end Visit_Nodes;
 
    function Same_Node (Left, Right : Term_Node) return Boolean;
@@ -584,12 +592,12 @@ package body Flyology_RDF.Terms is
       --  Both operands are built by the constructors above, which emit
       --  nodes in a canonical order, so equal terms have identical vectors
       --  and a positional comparison is exact rather than approximate.
-      if Left.Store.Count /= Right.Store.Count then
+      if Held_Count (Left) /= Held_Count (Right) then
          return False;
       end if;
 
-      for Index in 1 .. Left.Store.Count loop
-         if not Same_Node (Left.Store.Items (Index), Right.Store.Items (Index)) then
+      for Index in 1 .. Held_Count (Left) loop
+         if not Same_Node (Item (Left, Index), Item (Right, Index)) then
             return False;
          end if;
       end loop;
