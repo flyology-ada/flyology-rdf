@@ -92,8 +92,19 @@ procedure Convert is
 
    Source : Stream_IO.File_Type;
    Sink   : Writer_Sink;
+   --  The grammar follows the extension, so the same tool measures a
+   --  Turtle document and a TriG one with named graphs.
+   function Chosen_Syntax return Parsers.Syntax_Kind is
+     (if Ada.Command_Line.Argument_Count >= 1
+        and then Ada.Command_Line.Argument (1)'Length > 5
+        and then Ada.Command_Line.Argument (1)
+                   (Ada.Command_Line.Argument (1)'Last - 4
+                    .. Ada.Command_Line.Argument (1)'Last) = ".trig"
+      then Parsers.TriG_Syntax
+      else Parsers.Turtle_Syntax);
+
    Parser : Parsers.Parser :=
-     Parsers.Create (Source_Name => "input", Syntax => Parsers.Turtle_Syntax);
+     Parsers.Create (Source_Name => "input", Syntax => Chosen_Syntax);
    Status : Parsers.Parse_Status;
 
 begin

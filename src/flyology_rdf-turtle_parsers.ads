@@ -419,6 +419,14 @@ private
       Quad_Count      : Natural := 0;
       IRI_Cache       : IRI_Caches.Map;
       Name_Cache      : IRI_Caches.Map;
+      --  The graph a statement belongs to changes only at a graph
+      --  block, but every statement needs it. Rebuilding it per
+      --  statement re-admits the graph IRI each time.
+      Graph_Cache       : Quads.Graph_Name;
+      Graph_Cache_Key   : Unbounded.Unbounded_String;
+      Graph_Cache_Named : Boolean := False;
+      Graph_Cache_Blank : Boolean := False;
+      Graph_Cache_Valid : Boolean := False;
       Byte_Count      : Natural := 0;
       Work_Data       : Work_Statistics;
       Work_Units      : Natural := 0;

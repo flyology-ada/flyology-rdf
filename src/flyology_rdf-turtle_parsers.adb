@@ -456,16 +456,28 @@ package body Flyology_RDF.Turtle_Parsers is
          Object    : Terms.Term;
          Where     : Source_Span)
       is
-         Graph : constant Quads.Graph_Name :=
-           (if not Into.Graph_Is_Named then Quads.Default_Graph
-            elsif Into.Graph_Is_Blank
-            then Quads.Blank_Node_Graph
-                   (Terms.Blank_Node
-                      (Unbounded.To_String (Into.Current_Graph)))
-            else Quads.IRI_Graph
-                   (IRIs.From_UTF_8
-                      (Unbounded.To_String (Into.Current_Graph))));
       begin
+         if not Into.Graph_Cache_Valid
+           or else Into.Graph_Cache_Named /= Into.Graph_Is_Named
+           or else Into.Graph_Cache_Blank /= Into.Graph_Is_Blank
+           or else not Unbounded."=" (Into.Graph_Cache_Key,
+                                         Into.Current_Graph)
+         then
+            Into.Graph_Cache :=
+              (if not Into.Graph_Is_Named then Quads.Default_Graph
+               elsif Into.Graph_Is_Blank
+               then Quads.Blank_Node_Graph
+                      (Terms.Blank_Node
+                         (Unbounded.To_String (Into.Current_Graph)))
+               else Quads.IRI_Graph
+                      (IRIs.From_UTF_8
+                         (Unbounded.To_String (Into.Current_Graph))));
+            Into.Graph_Cache_Key := Into.Current_Graph;
+            Into.Graph_Cache_Named := Into.Graph_Is_Named;
+            Into.Graph_Cache_Blank := Into.Graph_Is_Blank;
+            Into.Graph_Cache_Valid := True;
+         end if;
+
          Into.Quad_Count := Into.Quad_Count + 1;
          if Into.Limits_Data.Maximum_Quads /= 0
            and then Into.Quad_Count > Into.Limits_Data.Maximum_Quads
@@ -474,7 +486,7 @@ package body Flyology_RDF.Turtle_Parsers is
          end if;
          Into.Work_Data.Statements_Parsed :=
            Into.Work_Data.Statements_Parsed + 1;
-         On_Quad (Target, Quads.Create (Graph, Subject, Predicate, Object),
+         On_Quad (Target, Quads.Create (Into.Graph_Cache, Subject, Predicate, Object),
                   Where);
       end Emit;
 
