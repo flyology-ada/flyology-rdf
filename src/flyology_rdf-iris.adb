@@ -4,7 +4,6 @@ with Flyology_RDF.Shared_Texts;
 package body Flyology_RDF.IRIs is
 
    use type Flyology_IRI.Error_Kind;
-   use type Flyology_IRI.Reference_Kind;
 
    --  Flyology_IRI defaults to 8 KiB, which is far below what an RDF
    --  document may legitimately contain, so every call below states the
@@ -12,32 +11,167 @@ package body Flyology_RDF.IRIs is
    --  an unrelated diagnostic.
    function Admits (Value : String) return Boolean;
 
+   --  Whether Value opens with a scheme, which is what makes a reference
+   --  absolute: a ':' before any '/', '?' or '#'. Flyology_IRI classifies
+   --  a successfully parsed reference as absolute under exactly this test
+   --  -- a colon in that position whose prefix is not a well-formed scheme
+   --  fails its parse outright -- so, joined with a successful parse, this
+   --  scan reproduces its Absolute_Reference verdict without asking it to
+   --  build a Reference, which is what allocates.
+   function Opens_With_Scheme (Value : String) return Boolean;
+
+   function Opens_With_Scheme (Value : String) return Boolean is
+   begin
+      for C of Value loop
+         case C is
+            when ':' =>
+               return True;
+            when '/' | '?' | '#' =>
+               return False;
+            when others =>
+               null;
+         end case;
+      end loop;
+      return False;
+   end Opens_With_Scheme;
+
+   --  A one-pass check for the shape almost every IRI in a real document
+   --  takes: an ASCII scheme://authority/path?query#fragment out of the
+   --  RFC 3986 character sets, with no percent-escape, no userinfo, no IP
+   --  literal, and at most a digits-only port. True means Flyology_IRI
+   --  would certainly admit the bytes as an absolute reference, because
+   --  each component test below is exactly its test narrowed to this
+   --  shape. False decides nothing: the caller falls back to the general
+   --  parser, which stays the sole authority on rejection. Percent
+   --  escapes, userinfo, IP literals and every non-ASCII byte take the
+   --  general path unexamined.
+   function Certainly_Absolute (Value : String) return Boolean;
+
+   Scheme_OK : constant array (Character) of Boolean :=
+     ('A' .. 'Z' | 'a' .. 'z' | '0' .. '9' | '+' | '-' | '.' => True,
+      others => False);
+
+   --  unreserved and sub-delims: the reg-name grammar.
+   Host_OK : constant array (Character) of Boolean :=
+     ('A' .. 'Z' | 'a' .. 'z' | '0' .. '9' | '-' | '.' | '_' | '~'
+      | '!' | '$' | '&' | ''' | '(' | ')' | '*' | '+' | ',' | ';' | '='
+        => True,
+      others => False);
+
+   --  pchar without pct-encoded, plus '/'.
+   Path_OK : constant array (Character) of Boolean :=
+     ('A' .. 'Z' | 'a' .. 'z' | '0' .. '9' | '-' | '.' | '_' | '~'
+      | '!' | '$' | '&' | ''' | '(' | ')' | '*' | '+' | ',' | ';' | '='
+      | ':' | '@' | '/' => True,
+      others => False);
+
+   --  The query and fragment grammar: pchar plus '/' and '?'.
+   Query_OK : constant array (Character) of Boolean :=
+     ('A' .. 'Z' | 'a' .. 'z' | '0' .. '9' | '-' | '.' | '_' | '~'
+      | '!' | '$' | '&' | ''' | '(' | ')' | '*' | '+' | ',' | ';' | '='
+      | ':' | '@' | '/' | '?' => True,
+      others => False);
+
+   function Certainly_Absolute (Value : String) return Boolean is
+      Index : Positive := Value'First;
+   begin
+      --  scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ) ":"
+      if Value (Index) not in 'A' .. 'Z' | 'a' .. 'z' then
+         return False;
+      end if;
+      loop
+         Index := Index + 1;
+         if Index > Value'Last then
+            return False;
+         end if;
+         exit when not Scheme_OK (Value (Index));
+      end loop;
+      if Value (Index) /= ':' then
+         return False;
+      end if;
+      Index := Index + 1;
+
+      --  //authority, ending at '/', '?', '#' or the end. One ':' at most,
+      --  splitting host from a digits-only port; everything else must be a
+      --  reg-name byte, so userinfo, IP literals and escapes fall back.
+      if Index + 1 <= Value'Last
+        and then Value (Index) = '/'
+        and then Value (Index + 1) = '/'
+      then
+         Index := Index + 2;
+         declare
+            Port_Colon : Natural := 0;
+         begin
+            while Index <= Value'Last
+              and then Value (Index) not in '/' | '?' | '#'
+            loop
+               if Value (Index) = ':' then
+                  if Port_Colon /= 0 then
+                     return False;
+                  end if;
+                  Port_Colon := Index;
+               elsif not Host_OK (Value (Index)) then
+                  return False;
+               end if;
+               Index := Index + 1;
+            end loop;
+            if Port_Colon /= 0 then
+               for Digit in Port_Colon + 1 .. Index - 1 loop
+                  if Value (Digit) not in '0' .. '9' then
+                     return False;
+                  end if;
+               end loop;
+            end if;
+         end;
+      end if;
+
+      --  path, then ?query, then #fragment, each a plain character run.
+      while Index <= Value'Last and then Value (Index) not in '?' | '#' loop
+         if not Path_OK (Value (Index)) then
+            return False;
+         end if;
+         Index := Index + 1;
+      end loop;
+      if Index <= Value'Last and then Value (Index) = '?' then
+         Index := Index + 1;
+         while Index <= Value'Last and then Value (Index) /= '#' loop
+            if not Query_OK (Value (Index)) then
+               return False;
+            end if;
+            Index := Index + 1;
+         end loop;
+      end if;
+      if Index <= Value'Last and then Value (Index) = '#' then
+         Index := Index + 1;
+         while Index <= Value'Last loop
+            if not Query_OK (Value (Index)) then
+               return False;
+            end if;
+            Index := Index + 1;
+         end loop;
+      end if;
+      return True;
+   end Certainly_Absolute;
+
    function Admits (Value : String) return Boolean is
-      Reference : Flyology_IRI.Reference;
-      Error     : Flyology_IRI.Parse_Error;
    begin
       if Value'Length = 0 or else Value'Length > Maximum_IRI_Bytes then
          return False;
       end if;
 
-      Flyology_IRI.Try_Parse
-        (Input      => Value,
-         Value      => Reference,
-         Error      => Error,
-         Syntax     => Flyology_IRI.IRI_Syntax,
-         Max_Length => Maximum_IRI_Bytes);
-
-      return Error.Kind = Flyology_IRI.No_Error
-        and then Flyology_IRI.Kind (Reference)
-                 = Flyology_IRI.Absolute_Reference;
+      return Certainly_Absolute (Value)
+        or else (Opens_With_Scheme (Value)
+                 and then Flyology_IRI.Can_Parse
+                   (Input      => Value,
+                    Syntax     => Flyology_IRI.IRI_Syntax,
+                    Max_Length => Maximum_IRI_Bytes));
    end Admits;
 
    function Is_Valid (Value : String) return Boolean is
      (Admits (Value));
 
    function From_UTF_8 (Value : String) return IRI is
-      Reference : Flyology_IRI.Reference;
-      Error     : Flyology_IRI.Parse_Error;
+      Error : Flyology_IRI.Parse_Error;
    begin
       if Value'Length = 0 then
          raise Invalid_IRI with "IRI input is empty";
@@ -45,10 +179,16 @@ package body Flyology_RDF.IRIs is
          raise Invalid_IRI with "IRI input exceeds the maximum byte length";
       end if;
 
-      Flyology_IRI.Try_Parse
+      if Certainly_Absolute (Value) then
+         return (Bytes => Shared_Texts.To_Text (Value));
+      end if;
+
+      --  Diagnose applies the same grammar Try_Parse does -- both are one
+      --  call to the same analysis -- but reports the verdict alone, so
+      --  admitting an IRI allocates nothing where Try_Parse built a parsed
+      --  Reference this function immediately threw away.
+      Error := Flyology_IRI.Diagnose
         (Input      => Value,
-         Value      => Reference,
-         Error      => Error,
          Syntax     => Flyology_IRI.IRI_Syntax,
          Max_Length => Maximum_IRI_Bytes);
 
@@ -60,9 +200,7 @@ package body Flyology_RDF.IRIs is
            "IRI input is not a canonical UTF-8 Unicode scalar sequence";
       elsif Error.Kind /= Flyology_IRI.No_Error then
          raise Invalid_IRI with "IRI input is not a valid IRI";
-      elsif Flyology_IRI.Kind (Reference)
-            /= Flyology_IRI.Absolute_Reference
-      then
+      elsif not Opens_With_Scheme (Value) then
          raise Invalid_IRI with "IRI input is not absolute";
       end if;
 
