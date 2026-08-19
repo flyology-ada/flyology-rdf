@@ -309,12 +309,15 @@ private
    --  Sized on creation rather than grown. Every constructor knows how
    --  many nodes it is about to write, so the count and the nodes are one
    --  allocation instead of a store pointing at a vector's own array.
+   type Node_Store;
+   type Node_Store_Access is access Node_Store;
+
    type Node_Store (Count : Positive) is limited record
       References : System.Atomic_Counters.Atomic_Counter;
+      --  Links this block into the free list while it is unused.
+      Next_Free  : Node_Store_Access;
       Items      : Node_Array (1 .. Count);
    end record;
-
-   type Node_Store_Access is access Node_Store;
 
    --  The root is always the last element, which is what makes
    --  child-before-parent order and index-only child references consistent.

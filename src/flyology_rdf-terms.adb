@@ -149,6 +149,56 @@ package body Flyology_RDF.Terms is
    procedure Free_Store is new Ada.Unchecked_Deallocation
      (Object => Node_Store, Name => Node_Store_Access);
 
+   --  Almost every term has exactly one node, so a document allocates and
+   --  releases the same shape of block over and over. These are kept and
+   --  handed back out instead.
+   --
+   --  The list is per task. A shared one would need a lock, and the point
+   --  of this is to be cheaper than the allocator it replaces; a block
+   --  released by a task other than the one that took it simply joins that
+   --  task's list, which is correct because a block belongs to nobody once
+   --  it is free. The count is bounded so a parse that builds a great many
+   --  terms and drops them does not hold the memory for the process's
+   --  lifetime.
+   Recycled_Limit : constant := 256;
+
+   Recycled       : Node_Store_Access := null;
+   Recycled_Count : Natural := 0;
+   pragma Thread_Local_Storage (Recycled);
+   pragma Thread_Local_Storage (Recycled_Count);
+
+   function Take_Store return Node_Store_Access;
+   procedure Release_Store (Item : in out Node_Store_Access);
+
+   function Take_Store return Node_Store_Access is
+      Reused : Node_Store_Access;
+   begin
+      if Recycled = null then
+         return new Node_Store (Count => 1);
+      end if;
+      Reused := Recycled;
+      Recycled := Reused.Next_Free;
+      Recycled_Count := Recycled_Count - 1;
+      Reused.Next_Free := null;
+      System.Atomic_Counters.Initialize (Reused.References);
+      return Reused;
+   end Take_Store;
+
+   procedure Release_Store (Item : in out Node_Store_Access) is
+   begin
+      if Item.Count = 1 and then Recycled_Count < Recycled_Limit then
+         --  Drop what the node held before the block is reused, or the
+         --  next term to take it would inherit a stale payload.
+         Item.Items (1) := (Variant => IRI_Kind, others => <>);
+         Item.Next_Free := Recycled;
+         Recycled := Item;
+         Recycled_Count := Recycled_Count + 1;
+         Item := null;
+      else
+         Free_Store (Item);
+      end if;
+   end Release_Store;
+
    overriding procedure Adjust (Value : in out Term) is
    begin
       if Value.Store /= null then
@@ -163,7 +213,7 @@ package body Flyology_RDF.Terms is
       if Doomed /= null
         and then System.Atomic_Counters.Decrement (Doomed.References)
       then
-         Free_Store (Doomed);
+         Release_Store (Doomed);
       end if;
    end Finalize;
 
@@ -208,8 +258,8 @@ package body Flyology_RDF.Terms is
    function Single (Node : Term_Node) return Term is
       Result : Term;
    begin
-      Result.Store := new Node_Store'(Count => 1, References => <>,
-                                      Items => (1 => Node));
+      Result.Store := Take_Store;
+      Result.Store.Items (1) := Node;
       return Result;
    end Single;
 
