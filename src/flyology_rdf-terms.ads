@@ -304,7 +304,7 @@ private
    --  The count is atomic for the same reason the holders in the parent
    --  package use an atomic one: copying a term must be safe from several
    --  tasks, even though the nodes it shares are never mutated.
-   type Node_Array is array (Positive range <>) of Term_Node;
+   type Node_Array is array (Positive range <>) of aliased Term_Node;
 
    --  Sized on creation rather than grown. Every constructor knows how
    --  many nodes it is about to write, so the count and the nodes are one
@@ -327,7 +327,7 @@ private
    --  is null until a term actually needs more than one.
    type Term is
      new Ada.Finalization.Controlled with record
-      Solo  : Term_Node;
+      Solo  : aliased Term_Node;
       Store : Node_Store_Access;
    end record;
 

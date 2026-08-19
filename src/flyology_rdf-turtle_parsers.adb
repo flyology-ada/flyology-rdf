@@ -207,7 +207,6 @@ package body Flyology_RDF.Turtle_Parsers is
                  "b" & Image (Image'First + 1 .. Image'Last);
             begin
                if not Into.Document_Labels.Contains (Label) then
-                  Into.Generated_Labels.Include (Label);
                   return Unbounded.To_String (Into.Blank_Prefix) & Label;
                end if;
             end;
@@ -225,12 +224,45 @@ package body Flyology_RDF.Turtle_Parsers is
       --  would merge two nodes the document keeps distinct, so the
       --  document's label is renamed instead -- consistently, so its later
       --  occurrences name the same node.
+      --  Whether Raw is a label Fresh_Blank_Label has handed out. Those
+      --  labels are exactly "b" followed by the unpadded decimal image of
+      --  a counter value the generator has passed -- minus the values it
+      --  skipped, and every skipped value's label was already in
+      --  Document_Labels when it was skipped and never leaves that set,
+      --  while a generated label never enters it. Shape plus one lookup
+      --  therefore decides membership exactly, and the second set that
+      --  grew by a heap node per generated label is gone.
+      function Is_Generated_Label (Raw : String) return Boolean;
+
+      function Is_Generated_Label (Raw : String) return Boolean is
+         Value : Natural := 0;
+      begin
+         if Raw'Length < 2 or else Raw (Raw'First) /= 'b'
+           --  The generator writes no leading zeros.
+           or else Raw (Raw'First + 1) = '0'
+         then
+            return False;
+         end if;
+         for Index in Raw'First + 1 .. Raw'Last loop
+            if Raw (Index) not in '0' .. '9'
+              or else Value > (Natural'Last - 9) / 10
+            then
+               return False;
+            end if;
+            Value :=
+              Value * 10
+              + (Character'Pos (Raw (Index)) - Character'Pos ('0'));
+         end loop;
+         return Value in 1 .. Into.Blank_Counter
+           and then not Into.Document_Labels.Contains (Raw);
+      end Is_Generated_Label;
+
       function Document_Blank_Label (Raw : String) return String is
       begin
          if Into.Renamed_Labels.Contains (Raw) then
             return Into.Renamed_Labels.Element (Raw);
          end if;
-         if Into.Generated_Labels.Contains (Raw) then
+         if Is_Generated_Label (Raw) then
             declare
                Replacement : constant String := Fresh_Blank_Label;
             begin
