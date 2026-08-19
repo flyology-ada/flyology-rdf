@@ -1253,16 +1253,23 @@ package body Flyology_RDF.Lexers is
 
          declare
             Word  : constant String := Lexers.Value (Buffer);
-            Upper : constant String :=
-              Ada.Characters.Handling.To_Upper (Word);
          begin
             --  Keywords the grammar writes in double quotes are
-            --  case-insensitive; those in single quotes are not.
+            --  case-insensitive; those in single quotes are not. The two
+            --  case-sensitive ones are decided before anything is
+            --  upper-cased: "a" is the most scanned keyword there is.
             if Word = "a" then
                Emit (A_Token);
+               return;
             elsif Word = "true" or else Word = "false" then
                Emit (Boolean_Token);
-            elsif Dialect = SPARQL_Dialect
+               return;
+            end if;
+            declare
+               Upper : constant String :=
+                 Ada.Characters.Handling.To_Upper (Word);
+            begin
+            if Dialect = SPARQL_Dialect
               and then Upper in "TRUE" | "FALSE"
             then
                --  SPARQL matches every keyword but "a" without regard to
@@ -1287,6 +1294,7 @@ package body Flyology_RDF.Lexers is
             else
                Fail (Unexpected_Character);
             end if;
+            end;
          end;
       end Scan_Name_Run;
 

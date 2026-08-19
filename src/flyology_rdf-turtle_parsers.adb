@@ -305,6 +305,12 @@ package body Flyology_RDF.Turtle_Parsers is
                  "b" & Image (Image'First + 1 .. Image'Last);
             begin
                if not Into.Document_Labels.Contains (Label) then
+                  --  The prefix is empty for every consumer that did not
+                  --  ask for one; joining it on would copy the label to
+                  --  say nothing.
+                  if Unbounded.Length (Into.Blank_Prefix) = 0 then
+                     return Label;
+                  end if;
                   return Unbounded.To_String (Into.Blank_Prefix) & Label;
                end if;
             end;
@@ -342,6 +348,9 @@ package body Flyology_RDF.Turtle_Parsers is
                end;
             end if;
             Into.Document_Labels.Insert (Raw);
+         end if;
+         if Unbounded.Length (Into.Blank_Prefix) = 0 then
+            return Raw;
          end if;
          return Unbounded.To_String (Into.Blank_Prefix) & Raw;
       end Document_Blank_Label;
