@@ -1,7 +1,6 @@
 private with Ada.Containers.Indefinite_Holders;
-private with Ada.Containers.Vectors;
 private with Ada.Containers.Indefinite_Hashed_Maps;
-private with Ada.Containers.Indefinite_Ordered_Maps;
+private with Ada.Finalization;
 private with Ada.Strings.Hash;
 private with Ada.Containers.Indefinite_Ordered_Sets;
 private with Ada.Strings.Unbounded;
@@ -289,10 +288,21 @@ private
 
    package Unbounded renames Ada.Strings.Unbounded;
 
-   package Token_Vectors is new Ada.Containers.Vectors
-     (Index_Type   => Positive,
-      Element_Type => Lexers.Token,
-      "="          => Lexers."=");
+   --  The tokens of the statement being accumulated. A plain array that
+   --  is reused from one statement to the next rather than a vector: the
+   --  scanner writes each token straight into its slot, resetting the
+   --  count re-parses nothing and finalises nothing, and reading a token
+   --  back is an array index rather than a checked reference object.
+   type Token_Array is array (Positive range <>) of Lexers.Token;
+   type Token_Array_Access is access Token_Array;
+
+   type Statement_Buffer is
+     new Ada.Finalization.Limited_Controlled with record
+      Data  : Token_Array_Access;
+      Count : Natural := 0;
+   end record;
+
+   overriding procedure Finalize (Value : in out Statement_Buffer);
 
    --  Admitting an IRI means parsing it, and a document says the same
    --  IRIs over and over -- every predicate, every type, every datatype.
@@ -352,7 +362,7 @@ private
         Parser_Cursors.Initial_State;
 
       --  Tokens retained because they are a partial statement.
-      Statement       : Token_Vectors.Vector;
+      Statement       : Statement_Buffer;
       Nesting         : Natural := 0;
 
       --  A running view of Statement -- bracket depth and the leading
