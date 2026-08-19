@@ -110,6 +110,41 @@ package body Flyology_RDF.Turtle_Parsers is
    --  diagnostic first, so the handler only has to deliver it.
    Grammar_Error : exception;
 
+   --  Whether Raw is a label the generator has already issued. Issued
+   --  labels are exactly "b" followed by the canonical decimal of some
+   --  count up to Counter -- except those the document had claimed first,
+   --  which the generator skips; the caller rules those out. Asking the
+   --  question arithmetically replaces a set that held every generated
+   --  label only to answer it.
+   function Is_Generated_Label
+     (Raw : String; Counter : Natural) return Boolean;
+
+   function Is_Generated_Label
+     (Raw : String; Counter : Natural) return Boolean
+   is
+      Value : Long_Long_Integer := 0;
+   begin
+      if Raw'Length < 2
+        or else Raw (Raw'First) /= 'b'
+        or else Raw (Raw'First + 1) = '0'
+        or else Raw'Length > 11
+        --  Eleven characters is "b" and ten digits, and a ten-digit
+        --  number without a leading zero can exceed any possible count;
+        --  anything longer certainly does.
+      then
+         return False;
+      end if;
+      for Index in Raw'First + 1 .. Raw'Last loop
+         if Raw (Index) not in '0' .. '9' then
+            return False;
+         end if;
+         Value := Value * 10
+           + Long_Long_Integer
+               (Character'Pos (Raw (Index)) - Character'Pos ('0'));
+      end loop;
+      return Value <= Long_Long_Integer (Counter);
+   end Is_Generated_Label;
+
    ----------------------------------------------------------------------
    --  Diagnostics
    ----------------------------------------------------------------------
@@ -270,7 +305,6 @@ package body Flyology_RDF.Turtle_Parsers is
                  "b" & Image (Image'First + 1 .. Image'Last);
             begin
                if not Into.Document_Labels.Contains (Label) then
-                  Into.Generated_Labels.Include (Label);
                   return Unbounded.To_String (Into.Blank_Prefix) & Label;
                end if;
             end;
@@ -293,15 +327,20 @@ package body Flyology_RDF.Turtle_Parsers is
          if Into.Renamed_Labels.Contains (Raw) then
             return Into.Renamed_Labels.Element (Raw);
          end if;
-         if Into.Generated_Labels.Contains (Raw) then
-            declare
-               Replacement : constant String := Fresh_Blank_Label;
-            begin
-               Into.Renamed_Labels.Insert (Raw, Replacement);
-               return Replacement;
-            end;
-         end if;
          if not Into.Document_Labels.Contains (Raw) then
+            --  A document label the generator issued first would merge
+            --  two distinct nodes, so it is renamed. One the document
+            --  claimed first cannot have been issued at all: had it been,
+            --  its first use here would have renamed it already, and the
+            --  generator skips claimed labels ever after.
+            if Is_Generated_Label (Raw, Into.Blank_Counter) then
+               declare
+                  Replacement : constant String := Fresh_Blank_Label;
+               begin
+                  Into.Renamed_Labels.Insert (Raw, Replacement);
+                  return Replacement;
+               end;
+            end if;
             Into.Document_Labels.Insert (Raw);
          end if;
          return Unbounded.To_String (Into.Blank_Prefix) & Raw;
@@ -348,17 +387,34 @@ package body Flyology_RDF.Turtle_Parsers is
       function Expand (Value : Lexers.Token) return IRIs.IRI;
 
       function Expand (Value : Lexers.Token) return IRIs.IRI is
-         --  One lookup, not a Contains and then an Element repeating the
-         --  same hash and the same comparison.
-         Known : constant Prefix_Maps.Cursor :=
-           Into.Prefixes.Find (Lexers.Prefix (Value));
+         Key : constant String :=
+           Lexers.Prefix (Value) & ':' & Lexers.Text (Value);
+         Cached : constant IRI_Caches.Cursor :=
+           Into.Name_Cache.Find (Key);
       begin
-         if not Prefix_Maps.Has_Element (Known) then
-            Reject (Undefined_Prefix, IRI_Production);
+         if IRI_Caches.Has_Element (Cached) then
+            return IRI_Caches.Element (Cached);
          end if;
-         return Resolve
-           (Prefix_Maps.Element (Known) & Lexers.Text (Value),
-            IRI_Production);
+
+         declare
+            --  One lookup, not a Contains and then an Element repeating
+            --  the same hash and the same comparison.
+            Known : constant Prefix_Maps.Cursor :=
+              Into.Prefixes.Find (Lexers.Prefix (Value));
+         begin
+            if not Prefix_Maps.Has_Element (Known) then
+               Reject (Undefined_Prefix, IRI_Production);
+            end if;
+            return Admitted : constant IRIs.IRI := Resolve
+              (Prefix_Maps.Element (Known) & Lexers.Text (Value),
+               IRI_Production)
+            do
+               if Natural (Into.Name_Cache.Length) < Maximum_Cached_Names
+               then
+                  Into.Name_Cache.Insert (Key, Admitted);
+               end if;
+            end return;
+         end;
       end Expand;
 
       procedure Emit
@@ -958,6 +1014,9 @@ package body Flyology_RDF.Turtle_Parsers is
                      Into.Prefixes.Include
                        (Unbounded.To_String (Name),
                         IRIs.To_UTF_8 (Target_IRI));
+                     --  What a cached name means was decided by the
+                     --  binding in force when it was admitted.
+                     Into.Name_Cache.Clear;
                   end;
 
                   if Terminated then

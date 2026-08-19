@@ -334,6 +334,15 @@ private
       Equivalent_Keys => "=",
       "="             => IRIs."=");
 
+   --  Admitted IRIs of prefixed names, keyed by the name as written --
+   --  "ex:name" -- rather than by the IRI it expands to. The name is a
+   --  fraction of the length of the expansion, so probing this map costs
+   --  a fraction of the hash, and a hit skips the prefix lookup and the
+   --  concatenation as well as the parse. A prefix can contain no colon,
+   --  so the key cannot conflate two bindings; the map is cleared when
+   --  any prefix is bound, since a rebinding changes what a name means.
+   Maximum_Cached_Names : constant := 4_096;
+
    --  Hashed rather than ordered. Every prefixed name in a document looks
    --  its prefix up, and an ordered map answers that by walking a tree and
    --  comparing strings at each step. Nothing here needs the ordering.
@@ -398,10 +407,6 @@ private
       --  never collides with one of them.
       Document_Labels : Label_Sets.Set;
 
-      --  Labels this parser generated, so that a document label arriving
-      --  later cannot silently merge with a node already emitted.
-      Generated_Labels : Label_Sets.Set;
-
       --  Document labels whose spelling a generated label had already
       --  taken, mapped to the replacement each was issued.
       Renamed_Labels  : Prefix_Maps.Map;
@@ -413,6 +418,7 @@ private
       Blank_Counter   : Natural := 0;
       Quad_Count      : Natural := 0;
       IRI_Cache       : IRI_Caches.Map;
+      Name_Cache      : IRI_Caches.Map;
       Byte_Count      : Natural := 0;
       Work_Data       : Work_Statistics;
       Work_Units      : Natural := 0;
