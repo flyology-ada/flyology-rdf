@@ -125,6 +125,9 @@ package body Flyology_RDF.Lexers is
    procedure Clear (Target : in out Held_Text);
 
    procedure Append (Target : in out Held_Text; Item : Character) is
+      --  Count is tested against Capacity before every write below, so
+      --  the index is known good and the implicit test would repeat it.
+      pragma Suppress (Index_Check);
    begin
       if Target.Spilled then
          Unbounded.Append (Target.Spill, Item);
@@ -140,6 +143,8 @@ package body Flyology_RDF.Lexers is
    end Append;
 
    procedure Append (Target : in out Held_Text; Item : String) is
+      pragma Suppress (Index_Check);
+      pragma Suppress (Length_Check);
    begin
       if Target.Spilled then
          Unbounded.Append (Target.Spill, Item);
