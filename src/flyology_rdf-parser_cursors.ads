@@ -81,6 +81,23 @@ package Flyology_RDF.Parser_Cursors with SPARK_Mode is
              and then State.Column < Positive'Last,
      Post => State.Byte_Offset = State'Old.Byte_Offset + Length;
 
+   --  Move a position past Count scalars that are each one byte long and
+   --  none of which is a line break.
+   --
+   --  This is the bulk form of Advance for a run the caller has already
+   --  classified: it must be exactly equivalent to Count calls of Advance
+   --  with a plain one-byte scalar, and Advance remains the authority on
+   --  what one scalar does to a position.
+   --  @param State Position to advance
+   --  @param Count How many one-byte, non-line-break scalars were consumed
+   procedure Advance_Run
+     (State : in out Cursor_State;
+      Count : Positive)
+   with
+     Pre  => State.Byte_Offset <= Natural'Last - Count
+             and then State.Column <= Positive'Last - Count,
+     Post => State.Byte_Offset = State'Old.Byte_Offset + Count;
+
    --  Report whether a scalar ends a line.
    --  @param Scalar Scalar to classify
    --  @return True for LF and CR

@@ -22,3 +22,6 @@ release.compile_checks = "Warnings"
 [[actions]]
 type = "test"
 command = ["./scripts/test.sh"]
+
+[[depends-on]]
+flyology_simd = "~0.1.0"

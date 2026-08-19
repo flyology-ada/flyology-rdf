@@ -1,5 +1,7 @@
 with Ada.Characters.Handling;
 
+with Flyology_RDF.Byte_Runs;
+
 package body Flyology_RDF.Lexers is
 
    package Cursors renames Parser_Cursors;
@@ -313,6 +315,18 @@ package body Flyology_RDF.Lexers is
          Walk_Index := Walk_Index + By_Length;
       end Step;
 
+      --  Consume a run of plain one-byte scalars that Byte_Runs has
+      --  already classified, without decoding them again one at a time.
+      procedure Skip_Run (Count : Natural);
+
+      procedure Skip_Run (Count : Natural) is
+      begin
+         if Count > 0 then
+            Cursors.Advance_Run (Walk_Position, Count);
+            Walk_Index := Walk_Index + Count;
+         end if;
+      end Skip_Run;
+
       procedure Emit (Which : Token_Kind);
 
       procedure Emit (Which : Token_Kind) is
@@ -489,6 +503,7 @@ package body Flyology_RDF.Lexers is
                return;
             else
                Step (Scalar, Length);
+               Skip_Run (Byte_Runs.IRI_Run (Text, Walk_Index));
             end if;
          end loop;
       end Scan_IRI_Reference;
@@ -653,6 +668,8 @@ package body Flyology_RDF.Lexers is
                return;
             else
                Step (Scalar, Length);
+               Skip_Run
+                 (Byte_Runs.String_Run (Text, Walk_Index, Quote = 16#22#));
             end if;
          end loop;
       end Scan_String;
@@ -774,6 +791,11 @@ package body Flyology_RDF.Lexers is
                                  and then not Blank_Label))
             then
                Step (Scalar, Length);
+               --  Every byte such a run consumes may legally end the
+               --  name, so the whole of it lands in the Good position
+               --  recorded below.
+               Skip_Run
+                 (Byte_Runs.Local_Name_Run (Text, Walk_Index, Blank_Label));
             elsif Scalar = 16#2E# then        --  '.' only if not final
                --  Nor may a dot open the name: the run so far is complete
                --  without it, and the dot belongs to the grammar.
@@ -1195,6 +1217,19 @@ package body Flyology_RDF.Lexers is
             else
                Append_Scalar (Buffer, Scalar);
                Step (Scalar, Length);
+               --  Unlike a local name, this run's characters land in the
+               --  token's text, so the whole run joins it as one slice:
+               --  ASCII name characters are their own decoded form.
+               declare
+                  Run : constant Natural :=
+                    Byte_Runs.Name_Run (Text, Walk_Index);
+               begin
+                  if Run > 0 then
+                     Append
+                       (Buffer, Text (Walk_Index .. Walk_Index + Run - 1));
+                     Skip_Run (Run);
+                  end if;
+               end;
             end if;
          end loop;
 

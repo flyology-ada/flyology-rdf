@@ -115,4 +115,16 @@ package body Flyology_RDF.Parser_Cursors with SPARK_Mode is
       end if;
    end Advance;
 
+   procedure Advance_Run
+     (State : in out Cursor_State;
+      Count : Positive) is
+   begin
+      --  Equivalent to Count Advances of a one-byte scalar that is neither
+      --  CR nor LF: the line never moves, the column moves once per scalar,
+      --  and the last scalar consumed was not a carriage return.
+      State.Byte_Offset := State.Byte_Offset + Count;
+      State.Column := State.Column + Count;
+      State.After_Carriage_Return := False;
+   end Advance_Run;
+
 end Flyology_RDF.Parser_Cursors;
