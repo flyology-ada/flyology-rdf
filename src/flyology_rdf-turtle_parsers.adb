@@ -348,13 +348,16 @@ package body Flyology_RDF.Turtle_Parsers is
       function Expand (Value : Lexers.Token) return IRIs.IRI;
 
       function Expand (Value : Lexers.Token) return IRIs.IRI is
-         Key : constant String := Lexers.Prefix (Value);
+         --  One lookup, not a Contains and then an Element repeating the
+         --  same hash and the same comparison.
+         Known : constant Prefix_Maps.Cursor :=
+           Into.Prefixes.Find (Lexers.Prefix (Value));
       begin
-         if not Into.Prefixes.Contains (Key) then
+         if not Prefix_Maps.Has_Element (Known) then
             Reject (Undefined_Prefix, IRI_Production);
          end if;
          return Resolve
-           (Into.Prefixes.Element (Key) & Lexers.Text (Value),
+           (Prefix_Maps.Element (Known) & Lexers.Text (Value),
             IRI_Production);
       end Expand;
 
@@ -1584,7 +1587,7 @@ package body Flyology_RDF.Turtle_Parsers is
                Into.Work_Data.Tokens_Scanned :=
                  Into.Work_Data.Tokens_Scanned + 1;
 
-               if Lexers.Text (Result)'Length
+               if Lexers.Text_Length (Result)
                   > Into.Limits_Data.Maximum_Token_Bytes
                then
                   Report (Token_Limit, Token_Span (Result));

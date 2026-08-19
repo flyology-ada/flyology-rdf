@@ -243,6 +243,9 @@ package body Flyology_RDF.Lexers is
    function Text (Value : Token) return String
    is (Lexers.Value (Value.Text_Value));
 
+   function Text_Length (Value : Token) return Natural
+   is (Length (Value.Text_Value));
+
    function Prefix (Value : Token) return String
    is (Lexers.Value (Value.Prefix_Value));
 
