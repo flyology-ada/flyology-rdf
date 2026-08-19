@@ -161,10 +161,28 @@ package Flyology_RDF.Lexers is
    --  @return The decoded text, empty for punctuation
    function Text (Value : Token) return String;
 
+   --  Return the length of the decoded text without copying it, for
+   --  callers that only need to bound it.
+   --  @param Value Token to inspect
+   --  @return Length of Text (Value) in bytes
+   function Text_Length (Value : Token) return Natural;
+
    --  Return the prefix part of a prefixed name, without the colon.
    --  @param Value Token to inspect
    --  @return The prefix, empty for a name written ":local"
    function Prefix (Value : Token) return String;
+
+   --  Return the length of the prefix without copying it.
+   --  @param Value Token to inspect
+   --  @return Length of Prefix (Value) in bytes
+   function Prefix_Length (Value : Token) return Natural;
+
+   --  Return a prefixed name as it was written: prefix, colon, local
+   --  part. One call and one copy where asking for the parts separately
+   --  and joining them costs three.
+   --  @param Value Token to inspect
+   --  @return The name, meaningful only for a Prefixed_Name_Token
+   function Name (Value : Token) return String;
 
    --  Return the quoting form of a string token.
    --  @param Value Token to inspect

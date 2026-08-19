@@ -1,7 +1,6 @@
 private with Ada.Containers.Indefinite_Holders;
-private with Ada.Containers.Vectors;
 private with Ada.Containers.Indefinite_Hashed_Maps;
-private with Ada.Containers.Indefinite_Ordered_Maps;
+private with Ada.Finalization;
 private with Ada.Strings.Hash;
 private with Ada.Containers.Indefinite_Ordered_Sets;
 private with Ada.Strings.Unbounded;
@@ -289,10 +288,35 @@ private
 
    package Unbounded renames Ada.Strings.Unbounded;
 
-   package Token_Vectors is new Ada.Containers.Vectors
-     (Index_Type   => Positive,
-      Element_Type => Lexers.Token,
-      "="          => Lexers."=");
+   --  The tokens of the statement being accumulated. A plain array that
+   --  is reused from one statement to the next rather than a vector: the
+   --  scanner writes each token straight into its slot, resetting the
+   --  count re-parses nothing and finalises nothing, and reading a token
+   --  back is an array index rather than a checked reference object.
+   type Token_Array is array (Positive range <>) of Lexers.Token;
+   type Token_Array_Access is access Token_Array;
+
+   type Statement_Buffer is
+     new Ada.Finalization.Limited_Controlled with record
+      Data  : Token_Array_Access;
+      Count : Natural := 0;
+   end record;
+
+   overriding procedure Finalize (Value : in out Statement_Buffer);
+
+   --  Bytes retained because they are a partial token, held in one heap
+   --  buffer that is reused from chunk to chunk. An Unbounded_String here
+   --  copied every chunk twice: once appending it, and once taking the
+   --  whole text back out to scan it.
+   type String_Access is access String;
+
+   type Byte_Buffer is
+     new Ada.Finalization.Limited_Controlled with record
+      Data  : String_Access;
+      Count : Natural := 0;
+   end record;
+
+   overriding procedure Finalize (Value : in out Byte_Buffer);
 
    --  Admitting an IRI means parsing it, and a document says the same
    --  IRIs over and over -- every predicate, every type, every datatype.
@@ -309,6 +333,15 @@ private
       Hash            => Ada.Strings.Hash,
       Equivalent_Keys => "=",
       "="             => IRIs."=");
+
+   --  Admitted IRIs of prefixed names, keyed by the name as written --
+   --  "ex:name" -- rather than by the IRI it expands to. The name is a
+   --  fraction of the length of the expansion, so probing this map costs
+   --  a fraction of the hash, and a hit skips the prefix lookup and the
+   --  concatenation as well as the parse. A prefix can contain no colon,
+   --  so the key cannot conflate two bindings; the map is cleared when
+   --  any prefix is bound, since a rebinding changes what a name means.
+   Maximum_Cached_Names : constant := 4_096;
 
    --  Hashed rather than ordered. Every prefixed name in a document looks
    --  its prefix up, and an ordered map answers that by walking a tree and
@@ -347,12 +380,12 @@ private
       Checkpoint      : Work_Checkpoint_Access;
 
       --  Bytes retained because they are a partial token.
-      Pending         : Unbounded.Unbounded_String;
+      Pending         : Byte_Buffer;
       Pending_Origin  : Parser_Cursors.Cursor_State :=
         Parser_Cursors.Initial_State;
 
       --  Tokens retained because they are a partial statement.
-      Statement       : Token_Vectors.Vector;
+      Statement       : Statement_Buffer;
       Nesting         : Natural := 0;
 
       --  A running view of Statement -- bracket depth and the leading
@@ -374,10 +407,6 @@ private
       --  never collides with one of them.
       Document_Labels : Label_Sets.Set;
 
-      --  Labels this parser generated, so that a document label arriving
-      --  later cannot silently merge with a node already emitted.
-      Generated_Labels : Label_Sets.Set;
-
       --  Document labels whose spelling a generated label had already
       --  taken, mapped to the replacement each was issued.
       Renamed_Labels  : Prefix_Maps.Map;
@@ -389,6 +418,7 @@ private
       Blank_Counter   : Natural := 0;
       Quad_Count      : Natural := 0;
       IRI_Cache       : IRI_Caches.Map;
+      Name_Cache      : IRI_Caches.Map;
       Byte_Count      : Natural := 0;
       Work_Data       : Work_Statistics;
       Work_Units      : Natural := 0;

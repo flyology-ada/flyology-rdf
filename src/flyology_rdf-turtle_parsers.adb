@@ -1,6 +1,65 @@
+with Ada.Unchecked_Deallocation;
+
 with Flyology_RDF.Terms;
 
 package body Flyology_RDF.Turtle_Parsers is
+
+   procedure Free is new Ada.Unchecked_Deallocation
+     (Object => Token_Array, Name => Token_Array_Access);
+
+   overriding procedure Finalize (Value : in out Statement_Buffer) is
+   begin
+      Value.Count := 0;
+      Free (Value.Data);
+   end Finalize;
+
+   procedure Free is new Ada.Unchecked_Deallocation
+     (Object => String, Name => String_Access);
+
+   overriding procedure Finalize (Value : in out Byte_Buffer) is
+   begin
+      Value.Count := 0;
+      Free (Value.Data);
+   end Finalize;
+
+   --  Make room for Extra more bytes.
+   procedure Ensure_Byte_Room (Buffer : in out Byte_Buffer; Extra : Natural);
+
+   procedure Ensure_Byte_Room (Buffer : in out Byte_Buffer; Extra : Natural)
+   is
+      Needed : constant Natural := Buffer.Count + Extra;
+   begin
+      if Needed > Buffer.Data'Last then
+         declare
+            Bigger : constant String_Access :=
+              new String
+                (1 .. Positive'Max (Needed, 2 * Buffer.Data'Last));
+         begin
+            Bigger (1 .. Buffer.Count) := Buffer.Data (1 .. Buffer.Count);
+            Free (Buffer.Data);
+            Buffer.Data := Bigger;
+         end;
+      end if;
+   end Ensure_Byte_Room;
+
+   --  Make room for one more token, so the scanner can build it in its
+   --  slot. Reused slots are overwritten by the scan itself, which
+   --  finalises whatever the previous statement left in them.
+   procedure Ensure_Token_Room (Buffer : in out Statement_Buffer);
+
+   procedure Ensure_Token_Room (Buffer : in out Statement_Buffer) is
+   begin
+      if Buffer.Count = Buffer.Data'Last then
+         declare
+            Bigger : constant Token_Array_Access :=
+              new Token_Array (1 .. 2 * Buffer.Data'Last);
+         begin
+            Bigger (1 .. Buffer.Count) := Buffer.Data (1 .. Buffer.Count);
+            Free (Buffer.Data);
+            Buffer.Data := Bigger;
+         end;
+      end if;
+   end Ensure_Token_Room;
 
    package Cursors renames Parser_Cursors;
 
@@ -50,6 +109,41 @@ package body Flyology_RDF.Turtle_Parsers is
    --  Raised internally to abandon a statement; every raise site records the
    --  diagnostic first, so the handler only has to deliver it.
    Grammar_Error : exception;
+
+   --  Whether Raw is a label the generator has already issued. Issued
+   --  labels are exactly "b" followed by the canonical decimal of some
+   --  count up to Counter -- except those the document had claimed first,
+   --  which the generator skips; the caller rules those out. Asking the
+   --  question arithmetically replaces a set that held every generated
+   --  label only to answer it.
+   function Is_Generated_Label
+     (Raw : String; Counter : Natural) return Boolean;
+
+   function Is_Generated_Label
+     (Raw : String; Counter : Natural) return Boolean
+   is
+      Value : Long_Long_Integer := 0;
+   begin
+      if Raw'Length < 2
+        or else Raw (Raw'First) /= 'b'
+        or else Raw (Raw'First + 1) = '0'
+        or else Raw'Length > 11
+        --  Eleven characters is "b" and ten digits, and a ten-digit
+        --  number without a leading zero can exceed any possible count;
+        --  anything longer certainly does.
+      then
+         return False;
+      end if;
+      for Index in Raw'First + 1 .. Raw'Last loop
+         if Raw (Index) not in '0' .. '9' then
+            return False;
+         end if;
+         Value := Value * 10
+           + Long_Long_Integer
+               (Character'Pos (Raw (Index)) - Character'Pos ('0'));
+      end loop;
+      return Value <= Long_Long_Integer (Counter);
+   end Is_Generated_Label;
 
    ----------------------------------------------------------------------
    --  Diagnostics
@@ -108,6 +202,9 @@ package body Flyology_RDF.Turtle_Parsers is
          Result.Limits_Data := Limits;
          Result.Syntax_Data := Syntax;
          Result.Checkpoint := Work_Checkpoint;
+         --  Never null, so no access anywhere else need test for it.
+         Result.Statement.Data := new Token_Array (1 .. 64);
+         Result.Pending.Data := new String (1 .. 4_096);
       end return;
    end Create;
 
@@ -124,23 +221,24 @@ package body Flyology_RDF.Turtle_Parsers is
       Failure : out Parse_Diagnostic;
       Failed  : out Boolean)
    is
-      Tokens : Token_Vectors.Vector renames Into.Statement;
-      Next   : Positive := Tokens.First_Index;
+      Tokens : Token_Array renames Into.Statement.Data.all;
+      Last   : constant Natural := Into.Statement.Count;
+      Next   : Positive := 1;
 
       Depth  : Natural := 0;
 
       function Peek_Kind return Lexers.Token_Kind
-      is (if Next <= Tokens.Last_Index
+      is (if Next <= Last
           then Lexers.Kind (Tokens (Next))
           else Lexers.Dot_Token);
 
-      function At_End return Boolean is (Next > Tokens.Last_Index);
+      function At_End return Boolean is (Next > Last);
 
-      --  A view of the current token rather than a copy of it: every
-      --  grammar routine below reads it several times, and a token carries
-      --  its decoded text.
-      function Current return Token_Vectors.Constant_Reference_Type
-      is (Tokens (if At_End then Tokens.Last_Index else Next));
+      --  Index of the current token -- the last one once the statement is
+      --  exhausted, so a rejection at the end still has a span. Reading
+      --  Tokens (Cur) is a view of the token, never a copy of it.
+      function Cur return Positive
+      is (if Next <= Last then Next else Last);
 
       procedure Reject
         (Why  : Diagnostic_Code;
@@ -153,7 +251,7 @@ package body Flyology_RDF.Turtle_Parsers is
          Failure :=
            (Code_Value       => Why,
             Production_Value => What,
-            Span_Value       => Token_Span (Current),
+            Span_Value       => Token_Span (Tokens (Cur)),
             Source_Value     => Into.Source_Data);
          Failed := True;
          raise Grammar_Error;
@@ -207,7 +305,12 @@ package body Flyology_RDF.Turtle_Parsers is
                  "b" & Image (Image'First + 1 .. Image'Last);
             begin
                if not Into.Document_Labels.Contains (Label) then
-                  Into.Generated_Labels.Include (Label);
+                  --  The prefix is empty for every consumer that did not
+                  --  ask for one; joining it on would copy the label to
+                  --  say nothing.
+                  if Unbounded.Length (Into.Blank_Prefix) = 0 then
+                     return Label;
+                  end if;
                   return Unbounded.To_String (Into.Blank_Prefix) & Label;
                end if;
             end;
@@ -230,16 +333,24 @@ package body Flyology_RDF.Turtle_Parsers is
          if Into.Renamed_Labels.Contains (Raw) then
             return Into.Renamed_Labels.Element (Raw);
          end if;
-         if Into.Generated_Labels.Contains (Raw) then
-            declare
-               Replacement : constant String := Fresh_Blank_Label;
-            begin
-               Into.Renamed_Labels.Insert (Raw, Replacement);
-               return Replacement;
-            end;
-         end if;
          if not Into.Document_Labels.Contains (Raw) then
+            --  A document label the generator issued first would merge
+            --  two distinct nodes, so it is renamed. One the document
+            --  claimed first cannot have been issued at all: had it been,
+            --  its first use here would have renamed it already, and the
+            --  generator skips claimed labels ever after.
+            if Is_Generated_Label (Raw, Into.Blank_Counter) then
+               declare
+                  Replacement : constant String := Fresh_Blank_Label;
+               begin
+                  Into.Renamed_Labels.Insert (Raw, Replacement);
+                  return Replacement;
+               end;
+            end if;
             Into.Document_Labels.Insert (Raw);
+         end if;
+         if Unbounded.Length (Into.Blank_Prefix) = 0 then
+            return Raw;
          end if;
          return Unbounded.To_String (Into.Blank_Prefix) & Raw;
       end Document_Blank_Label;
@@ -285,14 +396,52 @@ package body Flyology_RDF.Turtle_Parsers is
       function Expand (Value : Lexers.Token) return IRIs.IRI;
 
       function Expand (Value : Lexers.Token) return IRIs.IRI is
-         Key : constant String := Lexers.Prefix (Value);
+         Key : constant String := Lexers.Name (Value);
+         Cached : constant IRI_Caches.Cursor :=
+           Into.Name_Cache.Find (Key);
       begin
-         if not Into.Prefixes.Contains (Key) then
-            Reject (Undefined_Prefix, IRI_Production);
+         if IRI_Caches.Has_Element (Cached) then
+            return IRI_Caches.Element (Cached);
          end if;
-         return Resolve
-           (Into.Prefixes.Element (Key) & Lexers.Text (Value),
-            IRI_Production);
+
+         declare
+            --  The parts of the name are slices of the key already in
+            --  hand, and the lookup is one Find, not a Contains and then
+            --  an Element repeating the same hash and comparison.
+            Colon : constant Positive :=
+              Key'First + Lexers.Prefix_Length (Value);
+            Known : constant Prefix_Maps.Cursor :=
+              Into.Prefixes.Find (Key (Key'First .. Colon - 1));
+         begin
+            if not Prefix_Maps.Has_Element (Known) then
+               Reject (Undefined_Prefix, IRI_Production);
+            end if;
+            declare
+               --  Admitted directly rather than through Resolve: the
+               --  IRI cache there is keyed by the full expansion, and a
+               --  name that missed the name cache would pay that hash
+               --  only to miss again -- a prefixed name and a written-out
+               --  reference to the same IRI in one document is not the
+               --  case to spend the hot path on.
+               Reference : constant String :=
+                 Prefix_Maps.Element (Known)
+                 & Key (Colon + 1 .. Key'Last);
+               Admitted  : constant IRIs.IRI :=
+                 (if Into.Base_Data.Is_Empty
+                  then IRIs.From_UTF_8 (Reference)
+                  else IRIs.Resolve (Into.Base_Data.Element, Reference));
+            begin
+               if Natural (Into.Name_Cache.Length) < Maximum_Cached_Names
+               then
+                  Into.Name_Cache.Insert (Key, Admitted);
+               end if;
+               return Admitted;
+            end;
+         exception
+            when IRIs.Invalid_IRI | IRIs.Invalid_UTF_8 =>
+               Reject (Invalid_IRI, IRI_Production);
+               raise;
+         end;
       end Expand;
 
       procedure Emit
@@ -340,7 +489,7 @@ package body Flyology_RDF.Turtle_Parsers is
          Head    : Terms.Term := Terms.IRI_Term (RDF_Nil_IRI);
          Started : Boolean := False;
          Last    : Terms.Term := Head;
-         Where   : constant Source_Span := Token_Span (Current);
+         Where   : constant Source_Span := Token_Span (Tokens (Cur));
       begin
          Enter_Nesting;
          Expect (Lexers.Open_Paren_Token, Collection_Production);
@@ -402,14 +551,14 @@ package body Flyology_RDF.Turtle_Parsers is
             when Lexers.IRI_Reference_Token =>
                declare
                   Value : constant IRIs.IRI :=
-                    Resolve (Lexers.Text (Current), Predicate_Production);
+                    Resolve (Lexers.Text (Tokens (Cur)), Predicate_Production);
                begin
                   Advance;
                   return Value;
                end;
             when Lexers.Prefixed_Name_Token =>
                declare
-                  Value : constant IRIs.IRI := Expand (Current);
+                  Value : constant IRIs.IRI := Expand (Tokens (Cur));
                begin
                   Advance;
                   return Value;
@@ -439,14 +588,14 @@ package body Flyology_RDF.Turtle_Parsers is
          case Peek_Kind is
             when Lexers.IRI_Reference_Token =>
                Subject := Terms.IRI_Term
-                 (Resolve (Lexers.Text (Current), Triple_Term_Production));
+                 (Resolve (Lexers.Text (Tokens (Cur)), Triple_Term_Production));
                Advance;
             when Lexers.Prefixed_Name_Token =>
-               Subject := Terms.IRI_Term (Expand (Current));
+               Subject := Terms.IRI_Term (Expand (Tokens (Cur)));
                Advance;
             when Lexers.Blank_Label_Token =>
                Subject := Terms.Blank_Node
-                 (Document_Blank_Label (Lexers.Text (Current)));
+                 (Document_Blank_Label (Lexers.Text (Tokens (Cur))));
                Advance;
             when others =>
                Reject (Malformed_Syntax, Triple_Term_Production);
@@ -488,20 +637,20 @@ package body Flyology_RDF.Turtle_Parsers is
             when Lexers.IRI_Reference_Token =>
                return Result : constant Terms.Term :=
                  Terms.IRI_Term
-                   (Resolve (Lexers.Text (Current), Statement_Production))
+                   (Resolve (Lexers.Text (Tokens (Cur)), Statement_Production))
                do
                   Advance;
                end return;
             when Lexers.Prefixed_Name_Token =>
                return Result : constant Terms.Term :=
-                 Terms.IRI_Term (Expand (Current))
+                 Terms.IRI_Term (Expand (Tokens (Cur)))
                do
                   Advance;
                end return;
             when Lexers.Blank_Label_Token =>
                return Result : constant Terms.Term :=
                  Terms.Blank_Node
-                   (Document_Blank_Label (Lexers.Text (Current)))
+                   (Document_Blank_Label (Lexers.Text (Tokens (Cur))))
                do
                   Advance;
                end return;
@@ -528,7 +677,7 @@ package body Flyology_RDF.Turtle_Parsers is
       function Parse_Reified_Triple return Terms.Term;
 
       function Parse_Reified_Triple return Terms.Term is
-         Where     : constant Source_Span := Token_Span (Current);
+         Where     : constant Source_Span := Token_Span (Tokens (Cur));
          Subject   : Terms.Term := Terms.Blank_Node ("placeholder");
          Predicate : IRIs.IRI := RDF_Type_IRI;
          Object    : Terms.Term := Terms.Blank_Node ("placeholder");
@@ -540,21 +689,21 @@ package body Flyology_RDF.Turtle_Parsers is
          case Peek_Kind is
             when Lexers.IRI_Reference_Token =>
                Subject := Terms.IRI_Term
-                 (Resolve (Lexers.Text (Current), Subject_Production));
+                 (Resolve (Lexers.Text (Tokens (Cur)), Subject_Production));
                Advance;
             when Lexers.Prefixed_Name_Token =>
-               Subject := Terms.IRI_Term (Expand (Current));
+               Subject := Terms.IRI_Term (Expand (Tokens (Cur)));
                Advance;
             when Lexers.Blank_Label_Token =>
                Subject := Terms.Blank_Node
-                 (Document_Blank_Label (Lexers.Text (Current)));
+                 (Document_Blank_Label (Lexers.Text (Tokens (Cur))));
                Advance;
             when Lexers.Open_Quoted_Token =>
                Subject := Parse_Reified_Triple;
             when Lexers.Open_Bracket_Token =>
                --  "[]" is the anonymous blank node; a property list with
                --  content is a different production and not admitted here.
-               if Next + 1 > Tokens.Last_Index
+               if Next + 1 > Last
                  or else Lexers.Kind (Tokens (Next + 1))
                          /= Lexers.Close_Bracket_Token
                then
@@ -580,7 +729,7 @@ package body Flyology_RDF.Turtle_Parsers is
                | Lexers.Open_Triple_Term_Token | Lexers.Open_Quoted_Token =>
                Object := Parse_Object_Term;
             when Lexers.Open_Bracket_Token =>
-               if Next + 1 > Tokens.Last_Index
+               if Next + 1 > Last
                  or else Lexers.Kind (Tokens (Next + 1))
                          /= Lexers.Close_Bracket_Token
                then
@@ -614,7 +763,7 @@ package body Flyology_RDF.Turtle_Parsers is
       function Parse_Literal return Terms.Term;
 
       function Parse_Literal return Terms.Term is
-         Value : constant Lexers.Token := Current;
+         Value : Lexers.Token renames Tokens (Next);
       begin
          case Lexers.Kind (Value) is
             when Lexers.Integer_Token =>
@@ -638,7 +787,7 @@ package body Flyology_RDF.Turtle_Parsers is
                --  A language tag, a datatype, or neither.
                if Peek_Kind = Lexers.Language_Token then
                   declare
-                     Tag : constant Lexers.Token := Current;
+                     Tag : Lexers.Token renames Tokens (Next);
                   begin
                      Advance;
                      if Lexers.Has_Direction (Tag) then
@@ -657,7 +806,7 @@ package body Flyology_RDF.Turtle_Parsers is
                      when Lexers.IRI_Reference_Token =>
                         declare
                            Datatype : constant IRIs.IRI :=
-                             Resolve (Lexers.Text (Current),
+                             Resolve (Lexers.Text (Tokens (Cur)),
                                       Literal_Production);
                         begin
                            Advance;
@@ -666,7 +815,7 @@ package body Flyology_RDF.Turtle_Parsers is
                         end;
                      when Lexers.Prefixed_Name_Token =>
                         declare
-                           Datatype : constant IRIs.IRI := Expand (Current);
+                           Datatype : constant IRIs.IRI := Expand (Tokens (Cur));
                         begin
                            Advance;
                            return Terms.Literal
@@ -698,20 +847,20 @@ package body Flyology_RDF.Turtle_Parsers is
             when Lexers.IRI_Reference_Token =>
                return Result : constant Terms.Term :=
                  Terms.IRI_Term
-                   (Resolve (Lexers.Text (Current), Object_Production))
+                   (Resolve (Lexers.Text (Tokens (Cur)), Object_Production))
                do
                   Advance;
                end return;
             when Lexers.Prefixed_Name_Token =>
                return Result : constant Terms.Term :=
-                 Terms.IRI_Term (Expand (Current))
+                 Terms.IRI_Term (Expand (Tokens (Cur)))
                do
                   Advance;
                end return;
             when Lexers.Blank_Label_Token =>
                return Result : constant Terms.Term :=
                  Terms.Blank_Node
-                   (Document_Blank_Label (Lexers.Text (Current)))
+                   (Document_Blank_Label (Lexers.Text (Tokens (Cur))))
                do
                   Advance;
                end return;
@@ -739,20 +888,20 @@ package body Flyology_RDF.Turtle_Parsers is
             when Lexers.IRI_Reference_Token =>
                return Result : constant Terms.Term :=
                  Terms.IRI_Term
-                   (Resolve (Lexers.Text (Current), Subject_Production))
+                   (Resolve (Lexers.Text (Tokens (Cur)), Subject_Production))
                do
                   Advance;
                end return;
             when Lexers.Prefixed_Name_Token =>
                return Result : constant Terms.Term :=
-                 Terms.IRI_Term (Expand (Current))
+                 Terms.IRI_Term (Expand (Tokens (Cur)))
                do
                   Advance;
                end return;
             when Lexers.Blank_Label_Token =>
                return Result : constant Terms.Term :=
                  Terms.Blank_Node
-                   (Document_Blank_Label (Lexers.Text (Current)))
+                   (Document_Blank_Label (Lexers.Text (Tokens (Cur))))
                do
                   Advance;
                end return;
@@ -818,7 +967,7 @@ package body Flyology_RDF.Turtle_Parsers is
       begin
          loop
             declare
-               Where  : constant Source_Span := Token_Span (Current);
+               Where  : constant Source_Span := Token_Span (Tokens (Cur));
                Object : constant Terms.Term := Parse_Object_Term;
             begin
                Emit (Subject, Predicate, Object, Where);
@@ -865,12 +1014,12 @@ package body Flyology_RDF.Turtle_Parsers is
                begin
                   Advance;
                   if Peek_Kind /= Lexers.Prefixed_Name_Token
-                    or else Lexers.Text (Current) /= ""
+                    or else Lexers.Text (Tokens (Cur)) /= ""
                   then
                      Reject (Malformed_Syntax, Directive_Production);
                   end if;
                   Name :=
-                    Unbounded.To_Unbounded_String (Lexers.Prefix (Current));
+                    Unbounded.To_Unbounded_String (Lexers.Prefix (Tokens (Cur)));
                   Advance;
 
                   if Peek_Kind /= Lexers.IRI_Reference_Token then
@@ -878,7 +1027,7 @@ package body Flyology_RDF.Turtle_Parsers is
                   end if;
                   declare
                      Target_IRI : constant IRIs.IRI :=
-                       Resolve (Lexers.Text (Current), Directive_Production);
+                       Resolve (Lexers.Text (Tokens (Cur)), Directive_Production);
                   begin
                      Advance;
                      if Into.Limits_Data.Maximum_Prefixes /= 0
@@ -892,6 +1041,9 @@ package body Flyology_RDF.Turtle_Parsers is
                      Into.Prefixes.Include
                        (Unbounded.To_String (Name),
                         IRIs.To_UTF_8 (Target_IRI));
+                     --  What a cached name means was decided by the
+                     --  binding in force when it was admitted.
+                     Into.Name_Cache.Clear;
                   end;
 
                   if Terminated then
@@ -910,7 +1062,7 @@ package body Flyology_RDF.Turtle_Parsers is
                   end if;
                   declare
                      Target_IRI : constant IRIs.IRI :=
-                       Resolve (Lexers.Text (Current), Directive_Production);
+                       Resolve (Lexers.Text (Tokens (Cur)), Directive_Production);
                   begin
                      Advance;
                      Into.Base_Data := IRI_Holders.To_Holder (Target_IRI);
@@ -926,12 +1078,12 @@ package body Flyology_RDF.Turtle_Parsers is
             when Lexers.Version_Directive_Token =>
                declare
                   Terminated : constant Boolean :=
-                    Lexers.Text (Current) = "@version";
+                    Lexers.Text (Tokens (Cur)) = "@version";
                begin
                   Advance;
                   if Peek_Kind /= Lexers.String_Token then
                      Reject (Malformed_Syntax, Directive_Production);
-                  elsif Lexers.Form (Current) = Lexers.Long_Quoted then
+                  elsif Lexers.Form (Tokens (Cur)) = Lexers.Long_Quoted then
                      --  A version is a short-quoted string; the long form
                      --  is admitted elsewhere but not here.
                      Reject (Malformed_Syntax, Directive_Production);
@@ -963,11 +1115,11 @@ package body Flyology_RDF.Turtle_Parsers is
          begin
             --  No base applies: these grammars require the IRI as written
             --  to be absolute.
-            if not IRIs.Is_Valid (Lexers.Text (Current)) then
+            if not IRIs.Is_Valid (Lexers.Text (Tokens (Cur))) then
                Reject (Invalid_IRI, What);
             end if;
             return Result : constant IRIs.IRI :=
-              IRIs.From_UTF_8 (Lexers.Text (Current))
+              IRIs.From_UTF_8 (Lexers.Text (Tokens (Cur)))
             do
                Advance;
             end return;
@@ -987,15 +1139,15 @@ package body Flyology_RDF.Turtle_Parsers is
                when Lexers.Blank_Label_Token =>
                   return Result : constant Terms.Term :=
                     Terms.Blank_Node
-                      (Document_Blank_Label (Lexers.Text (Current)))
+                      (Document_Blank_Label (Lexers.Text (Tokens (Cur))))
                   do
                      Advance;
                   end return;
                when Lexers.String_Token =>
                   if not Allow_Literal then
                      Reject (Malformed_Syntax, What);
-                  elsif Lexers.Form (Current) = Lexers.Long_Quoted
-                    or else Lexers.Quote (Current) /= '"'
+                  elsif Lexers.Form (Tokens (Cur)) = Lexers.Long_Quoted
+                    or else Lexers.Quote (Tokens (Cur)) /= '"'
                   then
                      --  The line-based grammars admit only the short
                      --  double-quoted form: neither the long form nor the
@@ -1027,7 +1179,7 @@ package body Flyology_RDF.Turtle_Parsers is
             return Absolute (Predicate_Production);
          end Line_Predicate;
 
-         Where     : constant Source_Span := Token_Span (Current);
+         Where     : constant Source_Span := Token_Span (Tokens (Cur));
          Subject   : constant Terms.Term :=
            Line_Term (Subject_Production, Allow_Literal => False);
          Predicate : constant IRIs.IRI := Line_Predicate;
@@ -1062,7 +1214,7 @@ package body Flyology_RDF.Turtle_Parsers is
          --  separate the terms, so the terminator sits on the line the
          --  subject opened, and the next statement opens on a later one.
          if Peek_Kind = Lexers.Dot_Token
-           and then Lexers.Start_Position (Current).Line /= Where.Start_Line
+           and then Lexers.Start_Position (Tokens (Cur)).Line /= Where.Start_Line
          then
             Reject (Malformed_Syntax, Statement_Production);
          end if;
@@ -1147,7 +1299,7 @@ package body Flyology_RDF.Turtle_Parsers is
          Span_Value       => <>,
          Source_Value     => Into.Source_Data);
 
-      if Tokens.Is_Empty then
+      if Last = 0 then
          return;
       end if;
 
@@ -1179,25 +1331,25 @@ package body Flyology_RDF.Turtle_Parsers is
                Reject (Malformed_Syntax, Graph_Block_Production);
             end if;
             declare
-               Where : constant Source_Span := Token_Span (Current);
+               Where : constant Source_Span := Token_Span (Tokens (Cur));
             begin
                Advance;
                case Peek_Kind is
                   when Lexers.IRI_Reference_Token =>
                      Into.Current_Graph := Unbounded.To_Unbounded_String
                        (IRIs.To_UTF_8
-                          (Resolve (Lexers.Text (Current),
+                          (Resolve (Lexers.Text (Tokens (Cur)),
                                     Graph_Block_Production)));
                      Into.Graph_Is_Blank := False;
                      Advance;
                   when Lexers.Prefixed_Name_Token =>
                      Into.Current_Graph := Unbounded.To_Unbounded_String
-                       (IRIs.To_UTF_8 (Expand (Current)));
+                       (IRIs.To_UTF_8 (Expand (Tokens (Cur))));
                      Into.Graph_Is_Blank := False;
                      Advance;
                   when Lexers.Blank_Label_Token =>
                      Into.Current_Graph := Unbounded.To_Unbounded_String
-                       (Document_Blank_Label (Lexers.Text (Current)));
+                       (Document_Blank_Label (Lexers.Text (Tokens (Cur))));
                      Into.Graph_Is_Blank := True;
                      Advance;
                   when Lexers.Open_Bracket_Token =>
@@ -1251,13 +1403,13 @@ package body Flyology_RDF.Turtle_Parsers is
          when Lexers.IRI_Reference_Token | Lexers.Prefixed_Name_Token
             | Lexers.Blank_Label_Token | Lexers.Open_Bracket_Token =>
             if (Peek_Kind = Lexers.Open_Bracket_Token
-                and then Next + 2 <= Tokens.Last_Index
+                and then Next + 2 <= Last
                 and then Lexers.Kind (Tokens (Next + 1))
                          = Lexers.Close_Bracket_Token
                 and then Lexers.Kind (Tokens (Next + 2))
                          = Lexers.Open_Brace_Token)
               or else (Peek_Kind /= Lexers.Open_Bracket_Token
-                       and then Next + 1 <= Tokens.Last_Index
+                       and then Next + 1 <= Last
                        and then Lexers.Kind (Tokens (Next + 1))
                                 = Lexers.Open_Brace_Token)
             then
@@ -1270,18 +1422,18 @@ package body Flyology_RDF.Turtle_Parsers is
                   Reject (Malformed_Syntax, Graph_Block_Production);
                end if;
                declare
-                  Where : constant Source_Span := Token_Span (Current);
+                  Where : constant Source_Span := Token_Span (Tokens (Cur));
                begin
                   case Peek_Kind is
                      when Lexers.IRI_Reference_Token =>
                         Into.Current_Graph := Unbounded.To_Unbounded_String
                           (IRIs.To_UTF_8
-                             (Resolve (Lexers.Text (Current),
+                             (Resolve (Lexers.Text (Tokens (Cur)),
                                        Graph_Block_Production)));
                         Into.Graph_Is_Blank := False;
                      when Lexers.Prefixed_Name_Token =>
                         Into.Current_Graph := Unbounded.To_Unbounded_String
-                          (IRIs.To_UTF_8 (Expand (Current)));
+                          (IRIs.To_UTF_8 (Expand (Tokens (Cur))));
                         Into.Graph_Is_Blank := False;
                      when Lexers.Open_Bracket_Token =>
                         Advance;
@@ -1290,7 +1442,7 @@ package body Flyology_RDF.Turtle_Parsers is
                         Into.Graph_Is_Blank := True;
                      when others =>
                         Into.Current_Graph := Unbounded.To_Unbounded_String
-                          (Document_Blank_Label (Lexers.Text (Current)));
+                          (Document_Blank_Label (Lexers.Text (Tokens (Cur))));
                         Into.Graph_Is_Blank := True;
                   end case;
                   Advance;
@@ -1360,7 +1512,7 @@ package body Flyology_RDF.Turtle_Parsers is
       Complete : out Boolean)
    is
       Kind   : constant Lexers.Token_Kind := Lexers.Kind (Value);
-      Length : constant Natural := Natural (Into.Statement.Length);
+      Length : constant Natural := Into.Statement.Count;
    begin
       Complete := False;
 
@@ -1451,10 +1603,9 @@ package body Flyology_RDF.Turtle_Parsers is
       Target : in out Event_Sink'Class;
       Ended  : Boolean)
    is
-      Text     : constant String := Unbounded.To_String (Into.Pending);
+      Text     : String renames Into.Pending.Data (1 .. Into.Pending.Count);
       Position : Cursors.Cursor_State := Into.Pending_Origin;
       Index    : Positive := Text'First;
-      Result   : Lexers.Token := Lexers.Null_Token;
       Status   : Lexers.Scan_Status;
       Error    : Lexers.Scan_Error_Kind;
 
@@ -1478,6 +1629,16 @@ package body Flyology_RDF.Turtle_Parsers is
       loop
          exit when Into.Failed;
 
+         Ensure_Token_Room (Into.Statement);
+
+         declare
+            --  The scanner builds the token in the slot it will occupy,
+            --  so completing one appends nothing and copies nothing. The
+            --  slot only becomes part of the statement below, when the
+            --  scan reports Token_Found.
+            Result : Lexers.Token renames
+              Into.Statement.Data (Into.Statement.Count + 1);
+         begin
          declare
             Walked_From : constant Positive := Index;
          begin
@@ -1512,17 +1673,17 @@ package body Flyology_RDF.Turtle_Parsers is
                Into.Work_Data.Tokens_Scanned :=
                  Into.Work_Data.Tokens_Scanned + 1;
 
-               if Lexers.Text (Result)'Length
+               if Lexers.Text_Length (Result)
                   > Into.Limits_Data.Maximum_Token_Bytes
                then
                   Report (Token_Limit, Token_Span (Result));
                   exit;
                end if;
 
-               Into.Statement.Append (Result);
+               Into.Statement.Count := Into.Statement.Count + 1;
                Into.Work_Data.Maximum_Pending_Tokens :=
                  Work_Count'Max (Into.Work_Data.Maximum_Pending_Tokens,
-                                 Work_Count (Into.Statement.Length));
+                                 Work_Count (Into.Statement.Count));
 
                declare
                   Complete : Boolean;
@@ -1534,7 +1695,7 @@ package body Flyology_RDF.Turtle_Parsers is
                         Bad     : Boolean;
                      begin
                         Parse_Statement (Into, Target, Failure, Bad);
-                        Into.Statement.Clear;
+                        Into.Statement.Count := 0;
                         if Bad then
                            Into.Failed := True;
                            On_Diagnostic (Target, Failure);
@@ -1565,6 +1726,7 @@ package body Flyology_RDF.Turtle_Parsers is
                   To_Span (Position, Position));
                exit;
          end case;
+         end;
       end loop;
 
       --  Retain only what has not been consumed. Whitespace and completed
@@ -1581,17 +1743,26 @@ package body Flyology_RDF.Turtle_Parsers is
                  > Into.Limits_Data.Maximum_Token_Bytes
       then
          Report (Token_Limit, To_Span (Consumed_Position, Position));
-         Into.Pending := Unbounded.Null_Unbounded_String;
+         Into.Pending.Count := 0;
          Into.Pending_Origin := Consumed_Position;
          return;
       end if;
 
-      Into.Pending := Unbounded.To_Unbounded_String
-        (Text (Consumed_Index .. Text'Last));
+      declare
+         Kept : constant Natural := Text'Last - Consumed_Index + 1;
+      begin
+         --  Slide the unconsumed tail to the front of the buffer it is
+         --  already in; the next Feed appends after it.
+         if Kept > 0 and then Consumed_Index > 1 then
+            Into.Pending.Data (1 .. Kept) :=
+              Into.Pending.Data (Consumed_Index .. Text'Last);
+         end if;
+         Into.Pending.Count := Kept;
+      end;
       Into.Pending_Origin := Consumed_Position;
       Into.Work_Data.Maximum_Pending_Bytes :=
         Work_Count'Max (Into.Work_Data.Maximum_Pending_Bytes,
-                        Work_Count (Unbounded.Length (Into.Pending)));
+                        Work_Count (Into.Pending.Count));
    exception
       when others =>
          --  A sink callback raising must poison the parse, as the spec
@@ -1634,7 +1805,11 @@ package body Flyology_RDF.Turtle_Parsers is
 
       Into.Byte_Count := Into.Byte_Count + Bytes'Length;
 
-      Unbounded.Append (Into.Pending, Bytes);
+      Ensure_Byte_Room (Into.Pending, Bytes'Length);
+      Into.Pending.Data
+        (Into.Pending.Count + 1 .. Into.Pending.Count + Bytes'Length) :=
+        Bytes;
+      Into.Pending.Count := Into.Pending.Count + Bytes'Length;
       Deliver (Into, Target, Ended => False);
    end Feed;
 
@@ -1653,7 +1828,7 @@ package body Flyology_RDF.Turtle_Parsers is
       Into.Finished := True;
 
       if not Into.Failed
-        and then (not Into.Statement.Is_Empty
+        and then (Into.Statement.Count /= 0
                   or else Into.In_Graph_Block)
       then
          Into.Failed := True;

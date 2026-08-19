@@ -184,8 +184,13 @@ package body Flyology_RDF.Lexers is
    procedure Clear (Target : in out Held_Text) is
    begin
       Target.Count := 0;
-      Target.Spilled := False;
-      Target.Spill := Unbounded.Null_Unbounded_String;
+      if Target.Spilled then
+         --  Dropping the heap block only when one was taken keeps the
+         --  common case -- text that fit inline -- free of the controlled
+         --  assignment.
+         Target.Spilled := False;
+         Target.Spill := Unbounded.Null_Unbounded_String;
+      end if;
    end Clear;
 
    procedure Append_Scalar
@@ -238,8 +243,36 @@ package body Flyology_RDF.Lexers is
    function Text (Value : Token) return String
    is (Lexers.Value (Value.Text_Value));
 
+   function Text_Length (Value : Token) return Natural
+   is (Length (Value.Text_Value));
+
    function Prefix (Value : Token) return String
    is (Lexers.Value (Value.Prefix_Value));
+
+   function Prefix_Length (Value : Token) return Natural
+   is (Length (Value.Prefix_Value));
+
+   function Name (Value : Token) return String is
+   begin
+      if not Value.Prefix_Value.Spilled
+        and then not Value.Text_Value.Spilled
+      then
+         declare
+            Prefix_Count : constant Natural := Value.Prefix_Value.Count;
+            Text_Count   : constant Natural := Value.Text_Value.Count;
+         begin
+            return Result : String (1 .. Prefix_Count + Text_Count + 1) do
+               Result (1 .. Prefix_Count) :=
+                 Value.Prefix_Value.Fixed (1 .. Prefix_Count);
+               Result (Prefix_Count + 1) := ':';
+               Result (Prefix_Count + 2 .. Result'Last) :=
+                 Value.Text_Value.Fixed (1 .. Text_Count);
+            end return;
+         end;
+      end if;
+      return Lexers.Value (Value.Prefix_Value)
+        & (':' & Lexers.Value (Value.Text_Value));
+   end Name;
 
    function Form (Value : Token) return String_Form is (Value.Form_Value);
 
@@ -1220,16 +1253,23 @@ package body Flyology_RDF.Lexers is
 
          declare
             Word  : constant String := Lexers.Value (Buffer);
-            Upper : constant String :=
-              Ada.Characters.Handling.To_Upper (Word);
          begin
             --  Keywords the grammar writes in double quotes are
-            --  case-insensitive; those in single quotes are not.
+            --  case-insensitive; those in single quotes are not. The two
+            --  case-sensitive ones are decided before anything is
+            --  upper-cased: "a" is the most scanned keyword there is.
             if Word = "a" then
                Emit (A_Token);
+               return;
             elsif Word = "true" or else Word = "false" then
                Emit (Boolean_Token);
-            elsif Dialect = SPARQL_Dialect
+               return;
+            end if;
+            declare
+               Upper : constant String :=
+                 Ada.Characters.Handling.To_Upper (Word);
+            begin
+            if Dialect = SPARQL_Dialect
               and then Upper in "TRUE" | "FALSE"
             then
                --  SPARQL matches every keyword but "a" without regard to
@@ -1254,11 +1294,19 @@ package body Flyology_RDF.Lexers is
             else
                Fail (Unexpected_Character);
             end if;
+            end;
          end;
       end Scan_Name_Run;
 
    begin
-      Result := Null_Token;
+      --  Reset only what a previous occupant of Result could have left
+      --  behind and a consumer may read before Emit sets it: the texts,
+      --  and the direction flag. Everything else -- kind, form, quote,
+      --  positions -- is written on every path that makes it meaningful,
+      --  and Result is specified as meaningful only when Token_Found.
+      Clear (Result.Text_Value);
+      Clear (Result.Prefix_Value);
+      Result.Has_Direction_Data := False;
       Status := End_Of_Input;
       Error := No_Error;
 
