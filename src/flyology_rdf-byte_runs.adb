@@ -43,31 +43,16 @@ package body Flyology_RDF.Byte_Runs is
      ([16#47#, 16#03#, 16#07#, 16#03#, 16#03#, 16#03#, 16#03#, 16#03#,
        16#03#, 16#03#, 16#03#, 16#83#, 16#AB#, 16#83#, 16#2B#, 16#03#]);
 
-   String_High : constant SIMD.U8x16 := Native.From_Lanes
-     ([16#01#, 16#02#, 16#04#, 16#08#, 16#10#, 16#20#, 16#40#, 16#00#,
-       16#80#, 16#80#, 16#80#, 16#80#, 16#80#, 16#80#, 16#80#, 16#80#]);
-
-   --  A double-quoted string body: special at '"', '\', LF, CR, and
-   --  above ASCII.
-   Double_Quote_Low : constant SIMD.U8x16 := Native.From_Lanes
-     ([16#80#, 16#80#, 16#84#, 16#80#, 16#80#, 16#80#, 16#80#, 16#80#,
-       16#80#, 16#80#, 16#81#, 16#80#, 16#A0#, 16#81#, 16#80#, 16#80#]);
-
-   --  A single-quoted string body: as above with ''' for '"'.
-   Single_Quote_Low : constant SIMD.U8x16 := Native.From_Lanes
-     ([16#80#, 16#80#, 16#80#, 16#80#, 16#80#, 16#80#, 16#80#, 16#84#,
-       16#80#, 16#80#, 16#81#, 16#80#, 16#A0#, 16#81#, 16#80#, 16#80#]);
-
-   --  A name run: everything is special except letters, digits, '_' and
-   --  '-'. Blank node labels share this table, because a colon ends one.
-   Name_Low : constant SIMD.U8x16 := Native.From_Lanes
-     ([16#57#, 16#07#, 16#07#, 16#07#, 16#07#, 16#07#, 16#07#, 16#07#,
-       16#07#, 16#07#, 16#0F#, 16#AF#, 16#AF#, 16#AB#, 16#AF#, 16#8F#]);
-
-   --  A local name additionally admits ':'.
-   Local_Low : constant SIMD.U8x16 := Native.From_Lanes
-     ([16#57#, 16#07#, 16#07#, 16#07#, 16#07#, 16#07#, 16#07#, 16#07#,
-       16#07#, 16#07#, 16#07#, 16#AF#, 16#AF#, 16#AB#, 16#AF#, 16#8F#]);
+   --  A string body's special set is four bytes and the high half, which
+   --  fits in direct comparisons against these; each comparison compiles
+   --  to one vector instruction sequence with no call, where the nibble
+   --  tables cost three out-of-line operations per block.
+   Double_Quote : constant SIMD.U8x16 := Native.Splat (16#22#);
+   Single_Quote : constant SIMD.U8x16 := Native.Splat (16#27#);
+   Backslash    : constant SIMD.U8x16 := Native.Splat (16#5C#);
+   Line_Feed    : constant SIMD.U8x16 := Native.Splat (16#0A#);
+   Carriage     : constant SIMD.U8x16 := Native.Splat (16#0D#);
+   High_Bit     : constant SIMD.U8x16 := Native.Splat (16#80#);
 
    --  First set bit of one byte, for locating the first special lane.
    First_Set : array (U16 range 0 .. 255) of Natural range 0 .. 8 :=
@@ -139,22 +124,46 @@ package body Flyology_RDF.Byte_Runs is
      (Text          : String;
       From          : Positive;
       Double_Quoted : Boolean) return Natural
-   is (Classified_Run
-         (Text, From,
-          (if Double_Quoted then Double_Quote_Low else Single_Quote_Low),
-          String_High));
+   is
+      Quote  : constant SIMD.U8x16 :=
+        (if Double_Quoted then Double_Quote else Single_Quote);
+      Length : constant Natural := Text'Length;
+      Offset : Natural := From - Text'First;
+      Run    : Natural := 0;
+   begin
+      if Length < Block or else Offset > Length - Block then
+         return 0;
+      end if;
 
-   function Name_Run (Text : String; From : Positive) return Natural
-   is (Classified_Run (Text, From, Name_Low, ASCII_High));
+      declare
+         Bytes : constant SIMD.Byte_Array (0 .. Length - 1)
+         with Import, Address => Text'Address;
+      begin
+         loop
+            declare
+               Loaded  : constant SIMD.U8x16 :=
+                 Native.Load_Unaligned (Bytes, Offset);
+               Special : constant U16 :=
+                 Native.To_Bit_Mask (Native.Equal (Loaded, Quote))
+                 or Native.To_Bit_Mask (Native.Equal (Loaded, Backslash))
+                 or Native.To_Bit_Mask (Native.Equal (Loaded, Line_Feed))
+                 or Native.To_Bit_Mask (Native.Equal (Loaded, Carriage))
+                 or Native.To_Bit_Mask
+                      (Native.Equal
+                         (Native.Bitwise_And (Loaded, High_Bit), High_Bit));
+            begin
+               if Special /= 0 then
+                  return Run + First_Special (Special);
+               end if;
+               Run := Run + Block;
+               Offset := Offset + Block;
+               exit when Offset > Length - Block;
+            end;
+         end loop;
+      end;
 
-   function Local_Name_Run
-     (Text        : String;
-      From        : Positive;
-      Blank_Label : Boolean) return Natural
-   is (Classified_Run
-         (Text, From,
-          (if Blank_Label then Name_Low else Local_Low),
-          ASCII_High));
+      return Run;
+   end String_Run;
 
 begin
    for Value in U16 range 1 .. 255 loop

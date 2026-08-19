@@ -2,10 +2,15 @@
 --
 --  The scanner decodes one scalar at a time, and for most of a document
 --  that is one decode, one classification, and one position update per
---  byte of an IRI, a string body, or a name. Each function below looks at
---  sixteen bytes at once and reports how many leading bytes are certainly
---  plain content for one token class: printable ASCII that the scalar
---  loop would have consumed without doing anything but stepping past it.
+--  byte of an IRI or a string body. Each function below looks at sixteen
+--  bytes at once and reports how many leading bytes are certainly plain
+--  content for one token class: printable ASCII that the scalar loop
+--  would have consumed without doing anything but stepping past it.
+--
+--  Only the two classes whose runs are long enough to pay for a block
+--  classification are here. A name averages a handful of bytes, and
+--  classifying a sixteen-byte block costs about what two scalar steps
+--  do, so names measured slower in bulk and stay with the scalar loop.
 --
 --  The scalar loop remains the authority. A run never includes a byte
 --  that ends the token, opens an escape, breaks a line, or begins a
@@ -35,34 +40,9 @@ package Flyology_RDF.Byte_Runs is
       Double_Quoted : Boolean) return Natural
    with Pre => From >= Text'First;
 
-   --  Leading bytes at From that continue a name run: ASCII letters,
-   --  digits, '_' and '-'. A dot or colon ends the run because the scalar
-   --  loop decides what either means.
-   --  @param Text Buffer being scanned
-   --  @param From Index of the first candidate byte
-   --  @return Count of plain bytes, possibly zero; never past Text'Last
-   function Name_Run (Text : String; From : Positive) return Natural
-   with Pre => From >= Text'First;
-
-   --  Leading bytes at From that continue a local name and may legally
-   --  end one: the name-run characters, plus ':' unless the name is a
-   --  blank node label. Dot, percent, and backslash end the run because
-   --  the scalar loop owns each of those decisions.
-   --  @param Text Buffer being scanned
-   --  @param From Index of the first candidate byte
-   --  @param Blank_Label True when scanning a blank node label
-   --  @return Count of plain bytes, possibly zero; never past Text'Last
-   function Local_Name_Run
-     (Text        : String;
-      From        : Positive;
-      Blank_Label : Boolean) return Natural
-   with Pre => From >= Text'First;
-
 private
 
    pragma Inline (IRI_Run);
    pragma Inline (String_Run);
-   pragma Inline (Name_Run);
-   pragma Inline (Local_Name_Run);
 
 end Flyology_RDF.Byte_Runs;
