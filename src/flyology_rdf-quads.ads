@@ -13,10 +13,10 @@ package Flyology_RDF.Quads is
      (Default_Graph_Kind, IRI_Graph_Kind, Blank_Node_Graph_Kind);
 
    --  The name of a graph within a dataset.
-   type Graph_Name (<>) is private;
+   type Graph_Name is private;
 
    --  An RDF quad: a triple together with the graph it belongs to.
-   type Quad (<>) is private;
+   type Quad is private;
 
    --  Return the name of the default graph.
    --  @return The default graph name
@@ -125,30 +125,23 @@ package Flyology_RDF.Quads is
 
 private
 
-   package Term_Holders is new Immutable_Holders
-     (Element_Type => Terms.Term,
-      "="          => Terms."=");
-
-   type Graph_Name (Variant : Graph_Name_Kind) is record
+   type Graph_Name (Variant : Graph_Name_Kind := Default_Graph_Kind) is
+   record
       case Variant is
          when Default_Graph_Kind =>
             null;
          when IRI_Graph_Kind | Blank_Node_Graph_Kind =>
-            Value : Term_Holders.Holder;
+            Value : Terms.Term;
       end case;
    end record;
 
-   package Graph_Name_Holders is new Immutable_Holders
-     (Element_Type => Graph_Name,
-      "="          => Flyology_RDF.Quads."=");
-
-   package Triple_Holders is new Immutable_Holders
-     (Element_Type => Triples.Triple,
-      "="          => Triples."=");
-
-   type Quad (Initialized : Boolean) is record
-      Graph_Data     : Graph_Name_Holders.Holder;
-      Statement_Data : Triple_Holders.Holder;
+   --  Both components are definite now, so a quad is the graph name and
+   --  the statement themselves rather than two allocated cells pointing
+   --  at them. The terms inside still share their nodes, so this stays a
+   --  handful of pointers.
+   type Quad is record
+      Graph_Data     : Graph_Name;
+      Statement_Data : Triples.Triple;
    end record;
 
 end Flyology_RDF.Quads;

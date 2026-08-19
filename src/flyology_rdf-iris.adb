@@ -1,8 +1,7 @@
 with Flyology_IRI;
+with Flyology_RDF.Shared_Texts;
 
 package body Flyology_RDF.IRIs is
-
-   package Unbounded renames Ada.Strings.Unbounded;
 
    use type Flyology_IRI.Error_Kind;
    use type Flyology_IRI.Reference_Kind;
@@ -72,8 +71,7 @@ package body Flyology_RDF.IRIs is
       --  storing the input keeps that a property of this package rather than
       --  a standing assumption about another crate.
       return
-        (Initialized => True,
-         Bytes       => Unbounded.To_Unbounded_String (Value));
+        (Bytes => Shared_Texts.To_Text (Value));
    end From_UTF_8;
 
    --  Whether Reference could contain a "." or ".." path segment. Such a
@@ -113,12 +111,11 @@ package body Flyology_RDF.IRIs is
         and then Admits (Reference)
       then
          return
-           (Initialized => True,
-            Bytes       => Unbounded.To_Unbounded_String (Reference));
+           (Bytes => Shared_Texts.To_Text (Reference));
       end if;
 
       Flyology_IRI.Try_Parse
-        (Input      => Unbounded.To_String (Base.Bytes),
+        (Input      => Shared_Texts.To_String (Base.Bytes),
          Value      => Base_Reference,
          Error      => Base_Error,
          Syntax     => Flyology_IRI.IRI_Syntax,
@@ -146,15 +143,14 @@ package body Flyology_RDF.IRIs is
    end Resolve;
 
    function To_UTF_8 (Value : IRI) return String is
-     (Unbounded.To_String (Value.Bytes));
+     (Shared_Texts.To_String (Value.Bytes));
 
    function Byte_Length (Value : IRI) return Natural is
-     (Unbounded.Length (Value.Bytes));
+     (Shared_Texts.Length (Value.Bytes));
 
    overriding function "=" (Left, Right : IRI) return Boolean is
-      use type Unbounded.Unbounded_String;
    begin
-      return Left.Bytes = Right.Bytes;
+      return Shared_Texts."=" (Left.Bytes, Right.Bytes);
    end "=";
 
 end Flyology_RDF.IRIs;

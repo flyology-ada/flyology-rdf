@@ -186,7 +186,7 @@ package body Flyology_RDF.Terms is
    function Single (Node : Term_Node) return Term;
 
    function Single (Node : Term_Node) return Term is
-      Result : Term (Initialized => True);
+      Result : Term;
    begin
       Result.Store := new Node_Store;
       Result.Store.Items.Append (Node);
@@ -202,7 +202,7 @@ package body Flyology_RDF.Terms is
           Subtree_Size   => 1,
           Subtree_Depth  => 0,
           Payload_Length => Length,
-          IRI_Data       => IRI_Holders.To_Holder (Value)));
+          IRI_Data       => Value));
    end IRI_Term;
 
    function Blank_Node (Label : String) return Term is
@@ -249,7 +249,7 @@ package body Flyology_RDF.Terms is
           Subtree_Depth      => 0,
           Payload_Length     => Length,
           Lexical_Data       => Unbounded.To_Unbounded_String (Lexical_Form),
-          Datatype_Data      => IRI_Holders.To_Holder (Datatype),
+          Datatype_Data      => Datatype,
           Language_Data      => Unbounded.To_Unbounded_String (Language),
           Has_Language_Data  => Has_Language,
           Direction_Data     => Direction,
@@ -338,7 +338,7 @@ package body Flyology_RDF.Terms is
         + Root (Object).Payload_Length
         + IRIs.Byte_Length (Predicate);
 
-      Result : Term (Initialized => True);
+      Result : Term;
    begin
       if Result_Depth > Maximum_Triple_Term_Depth then
          raise Term_Limit_Error with
@@ -381,7 +381,7 @@ package body Flyology_RDF.Terms is
             Subtree_Depth  => Result_Depth,
             Payload_Length => Payload,
             Subject_Node   => Subject_Count,
-            Predicate_Data => IRI_Holders.To_Holder (Predicate),
+            Predicate_Data => Predicate,
             Object_Node    => Subject_Count + Object_Count));
 
       return Result;
@@ -397,7 +397,7 @@ package body Flyology_RDF.Terms is
    function IRI_Value (Value : Term) return IRIs.IRI is
    begin
       Require_Kind (Value, IRI_Kind);
-      return IRI_Holders.Element (Root (Value).IRI_Data);
+      return Root (Value).IRI_Data;
    end IRI_Value;
 
    function Label (Value : Term) return String is
@@ -415,7 +415,7 @@ package body Flyology_RDF.Terms is
    function Datatype (Value : Term) return IRIs.IRI is
    begin
       Require_Kind (Value, Literal_Kind);
-      return IRI_Holders.Element (Root (Value).Datatype_Data);
+      return Root (Value).Datatype_Data;
    end Datatype;
 
    function Has_Language (Value : Term) return Boolean is
@@ -457,7 +457,7 @@ package body Flyology_RDF.Terms is
       Node   : constant Term_Node := Value.Store.Items (Index);
       First  : constant Positive := Index - Node.Subtree_Size + 1;
       Offset : constant Natural := First - 1;
-      Result : Term (Initialized => True);
+      Result : Term;
    begin
       Result.Store := new Node_Store;
       Result.Store.Items.Reserve_Capacity
@@ -486,7 +486,7 @@ package body Flyology_RDF.Terms is
    function Triple_Predicate (Value : Term) return IRIs.IRI is
    begin
       Require_Kind (Value, Triple_Term_Kind);
-      return IRI_Holders.Element (Root (Value).Predicate_Data);
+      return Root (Value).Predicate_Data;
    end Triple_Predicate;
 
    function Triple_Object (Value : Term) return Term is
@@ -527,14 +527,14 @@ package body Flyology_RDF.Terms is
          begin
             case Node.Variant is
                when IRI_Kind =>
-                  On_IRI (Here, IRI_Holders.Element (Node.IRI_Data));
+                  On_IRI (Here, Node.IRI_Data);
                when Blank_Node_Kind =>
                   On_Blank (Here, Unbounded.To_String (Node.Label_Data));
                when Literal_Kind =>
                   On_Literal
                     (Here,
                      Unbounded.To_String (Node.Lexical_Data),
-                     IRI_Holders.Element (Node.Datatype_Data),
+                     Node.Datatype_Data,
                      Node.Has_Language_Data,
                      Unbounded.To_String (Node.Language_Data),
                      Node.Has_Direction_Data,
@@ -543,7 +543,7 @@ package body Flyology_RDF.Terms is
                   On_Triple
                     (Here,
                      Node_ID (Node.Subject_Node),
-                     IRI_Holders.Element (Node.Predicate_Data),
+                     Node.Predicate_Data,
                      Node_ID (Node.Object_Node));
             end case;
          end;
@@ -554,8 +554,8 @@ package body Flyology_RDF.Terms is
    function Same_Node (Left, Right : Term_Node) return Boolean;
 
    function Same_Node (Left, Right : Term_Node) return Boolean is
-      use type IRI_Holders.Holder;
       use type Unbounded.Unbounded_String;
+      use type IRIs.IRI;
    begin
       if Left.Variant /= Right.Variant then
          return False;

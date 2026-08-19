@@ -250,16 +250,32 @@ package body Flyology_RDF.Turtle_Parsers is
       function Resolve (Reference : String; What : Production_Kind)
         return IRIs.IRI is
       begin
-         if Is_Line_Based (Into.Syntax_Data)
-           or else Into.Base_Data.Is_Empty
-         then
-            if not IRIs.Is_Valid (Reference) then
-               Reject (Invalid_IRI, What);
+         declare
+            Known : constant IRI_Caches.Cursor :=
+              Into.IRI_Cache.Find (Reference);
+         begin
+            if IRI_Caches.Has_Element (Known) then
+               return IRI_Caches.Element (Known);
             end if;
-            return IRIs.From_UTF_8 (Reference);
-         end if;
+         end;
 
-         return IRIs.Resolve (Into.Base_Data.Element, Reference);
+         declare
+            Admitted : constant IRIs.IRI :=
+              (if Is_Line_Based (Into.Syntax_Data)
+                 or else Into.Base_Data.Is_Empty
+               --  From_UTF_8 parses the reference to admit it, so asking
+               --  Is_Valid first parsed every IRI in the document twice.
+               --  The handler below turns its refusal into the same
+               --  diagnostic the pre-check raised, so the second parse
+               --  bought nothing.
+               then IRIs.From_UTF_8 (Reference)
+               else IRIs.Resolve (Into.Base_Data.Element, Reference));
+         begin
+            if Natural (Into.IRI_Cache.Length) < Maximum_Cached_IRIs then
+               Into.IRI_Cache.Insert (Reference, Admitted);
+            end if;
+            return Admitted;
+         end;
       exception
          when IRIs.Invalid_IRI | IRIs.Invalid_UTF_8 =>
             Reject (Invalid_IRI, What);
@@ -898,6 +914,9 @@ package body Flyology_RDF.Turtle_Parsers is
                   begin
                      Advance;
                      Into.Base_Data := IRI_Holders.To_Holder (Target_IRI);
+                     --  What is cached was resolved against the
+                     --  old base, so none of it survives a new one.
+                     Into.IRI_Cache.Clear;
                   end;
                   if Terminated then
                      Expect (Lexers.Dot_Token, Directive_Production);

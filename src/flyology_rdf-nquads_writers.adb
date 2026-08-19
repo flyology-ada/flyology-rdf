@@ -36,17 +36,20 @@ package body Flyology_RDF.NQuads_Writers is
    --  listed here; every other control byte becomes a numeric escape,
    --  and all remaining UTF-8 passes through unchanged so that the
    --  output stays valid UTF-8 rather than ASCII.
+   --  The same for a literal's lexical form, for the same reason.
+   Escapes_In_Literal : constant array (Character) of Boolean :=
+     [Character'Val (0) .. Character'Val (16#1F#) => True,
+      Character'Val (16#7F#) => True,
+      '"' | '\' => True,
+      others => False];
+
    function Escape_Literal (Value : String) return String is
       Buffer : Unbounded.Unbounded_String;
    begin
       --  Most lexical forms contain nothing to escape, and for those the
       --  input is the output: one scan decides, and the character-by-
       --  character rebuild below is paid only when it changes something.
-      if (for all Item of Value =>
-            Item not in '"' | '\'
-            and then Character'Pos (Item) >= 16#20#
-            and then Character'Pos (Item) /= 16#7F#)
-      then
+      if (for all Item of Value => not Escapes_In_Literal (Item)) then
          return Value;
       end if;
 
@@ -78,16 +81,21 @@ package body Flyology_RDF.NQuads_Writers is
    --  can only appear as escapes; an admitted IRI should contain none of
    --  them, but writing defensively costs nothing and keeps a malformed
    --  value from producing unparseable output.
+   --  Deciding whether an IRI needs escaping is a scan over every byte of
+   --  every IRI written, and asking nine separate questions of each byte
+   --  costs more than asking one. The answers do not depend on anything
+   --  but the byte, so they are worked out once.
+   Escapes_In_IRI : constant array (Character) of Boolean :=
+     [Character'Val (0) .. Character'Val (16#20#) => True,
+      '<' | '>' | '"' | '{' | '}' | '|' | '^' | '`' | '\' => True,
+      others => False];
+
    function Escape_IRI (Value : String) return String is
       Buffer : Unbounded.Unbounded_String;
    begin
       --  An admitted IRI contains nothing this production forbids, so the
       --  defensive rebuild below is almost never taken: one scan decides.
-      if (for all Item of Value =>
-            Character'Pos (Item) > 16#20#
-            and then Item not in '<' | '>' | '"' | '{' | '}' | '|'
-                               | '^' | '`' | '\')
-      then
+      if (for all Item of Value => not Escapes_In_IRI (Item)) then
          return Value;
       end if;
 
@@ -95,10 +103,7 @@ package body Flyology_RDF.NQuads_Writers is
          declare
             Code : constant Natural := Character'Pos (Item);
          begin
-            if Code <= 16#20#
-              or else Item in '<' | '>' | '"' | '{' | '}' | '|'
-                            | '^' | '`' | '\'
-            then
+            if Escapes_In_IRI (Item) then
                Append_Escape_16 (Buffer, Code);
             else
                Unbounded.Append (Buffer, Item);

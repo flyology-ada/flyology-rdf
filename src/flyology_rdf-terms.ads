@@ -1,4 +1,3 @@
-private with Ada.Containers.Indefinite_Holders;
 private with Ada.Containers.Vectors;
 private with Ada.Finalization;
 private with System;
@@ -64,7 +63,7 @@ package Flyology_RDF.Terms is
    function Language_String_Datatype return IRIs.IRI;
 
    --  An immutable RDF term.
-   type Term (<>) is private;
+   type Term is private;
 
    --  Visit-local identity of one node in a term's immutable tree. Values
    --  are meaningful only for the duration of the Visit_Nodes call that
@@ -274,29 +273,25 @@ package Flyology_RDF.Terms is
 
 private
 
-   package IRI_Holders is new Ada.Containers.Indefinite_Holders
-     (Element_Type => IRIs.IRI,
-      "="          => IRIs."=");
-
    type Term_Node (Variant : Term_Kind := IRI_Kind) is record
       Subtree_Size   : Positive := 1;
       Subtree_Depth  : Natural  := 0;
       Payload_Length : Natural  := 0;
       case Variant is
          when IRI_Kind =>
-            IRI_Data : IRI_Holders.Holder;
+            IRI_Data : IRIs.IRI;
          when Blank_Node_Kind =>
             Label_Data : Ada.Strings.Unbounded.Unbounded_String;
          when Literal_Kind =>
             Lexical_Data       : Ada.Strings.Unbounded.Unbounded_String;
-            Datatype_Data      : IRI_Holders.Holder;
+            Datatype_Data      : IRIs.IRI;
             Language_Data      : Ada.Strings.Unbounded.Unbounded_String;
             Has_Language_Data  : Boolean := False;
             Direction_Data     : Base_Direction := Left_To_Right;
             Has_Direction_Data : Boolean := False;
          when Triple_Term_Kind =>
             Subject_Node   : Positive := 1;
-            Predicate_Data : IRI_Holders.Holder;
+            Predicate_Data : IRIs.IRI;
             Object_Node    : Positive := 1;
       end case;
    end record;
@@ -323,7 +318,10 @@ private
 
    --  The root is always the last element, which is what makes
    --  child-before-parent order and index-only child references consistent.
-   type Term (Initialized : Boolean) is
+   --  Definite, so a triple can hold three of these directly instead of
+   --  wrapping each in a holder that allocates. The value is one pointer
+   --  to the shared nodes, so holding it by value costs nothing.
+   type Term is
      new Ada.Finalization.Controlled with record
       Store : Node_Store_Access;
    end record;
