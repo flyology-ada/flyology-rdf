@@ -1,5 +1,8 @@
 private with Ada.Containers.Indefinite_Holders;
-private with Ada.Containers.Indefinite_Vectors;
+private with Ada.Containers.Vectors;
+private with Ada.Finalization;
+private with System;
+private with System.Atomic_Counters;
 private with Ada.Strings.Unbounded;
 
 with Flyology_RDF.IRIs;
@@ -298,14 +301,34 @@ private
       end case;
    end record;
 
-   package Term_Node_Vectors is new Ada.Containers.Indefinite_Vectors
+   package Term_Node_Vectors is new Ada.Containers.Vectors
      (Index_Type   => Positive,
       Element_Type => Term_Node);
 
+   --  The nodes are shared and reference counted rather than held by
+   --  value. A term is immutable once built, and it is copied constantly:
+   --  into a triple, into a quad, out to a consumer. Holding the vector
+   --  directly made each of those a deep copy -- an allocation and a walk
+   --  over every node -- where this makes them an atomic increment.
+   --
+   --  The count is atomic for the same reason the holders in the parent
+   --  package use an atomic one: copying a term must be safe from several
+   --  tasks, even though the nodes it shares are never mutated.
+   type Node_Store is limited record
+      References : System.Atomic_Counters.Atomic_Counter;
+      Items      : Term_Node_Vectors.Vector;
+   end record;
+
+   type Node_Store_Access is access Node_Store;
+
    --  The root is always the last element, which is what makes
    --  child-before-parent order and index-only child references consistent.
-   type Term (Initialized : Boolean) is record
-      Nodes : Term_Node_Vectors.Vector;
+   type Term (Initialized : Boolean) is
+     new Ada.Finalization.Controlled with record
+      Store : Node_Store_Access;
    end record;
+
+   overriding procedure Adjust (Value : in out Term);
+   overriding procedure Finalize (Value : in out Term);
 
 end Flyology_RDF.Terms;

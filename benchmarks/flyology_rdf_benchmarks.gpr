@@ -9,6 +9,10 @@ project Flyology_RDF_Benchmarks is
    for Main use ("benchmarks.adb", "convert.adb");
    for Create_Missing_Dirs use "True";
 
+   package Builder is
+      for Global_Configuration_Pragmas use "no_abort.adc";
+   end Builder;
+
    package Compiler is
       --  Measured at the optimization a consumer gets, and without
       --  assertions: a benchmark that timed the checks would be measuring
