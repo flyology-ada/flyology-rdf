@@ -47,12 +47,19 @@ package Flyology_RDF.Shared_Texts is
 
 private
 
-   type Shared_Text (Length : Natural) is limited record
-      References : System.Atomic_Counters.Atomic_Counter;
-      Data       : String (1 .. Length);
-   end record;
-
+   type Shared_Text;
    type Shared_Text_Access is access Shared_Text;
+
+   --  Capacity is what was allocated, Length what is in use. They are
+   --  separate so a released block can serve any later text that fits,
+   --  which is what makes recycling them possible at all: a document
+   --  builds hundreds of thousands of short texts and drops them.
+   type Shared_Text (Capacity : Natural) is limited record
+      References : System.Atomic_Counters.Atomic_Counter;
+      Next_Free  : Shared_Text_Access;
+      Length     : Natural := 0;
+      Data       : String (1 .. Capacity);
+   end record;
 
    type Text is new Ada.Finalization.Controlled with record
       Payload : Shared_Text_Access;
