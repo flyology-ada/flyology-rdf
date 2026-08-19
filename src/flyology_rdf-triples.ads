@@ -10,7 +10,7 @@ with Flyology_RDF.Terms;
 package Flyology_RDF.Triples is
 
    --  An immutable RDF triple.
-   type Triple (<>) is private;
+   type Triple is private;
 
    --  Build a triple from its three components.
    --  @param Subject Subject term
@@ -59,18 +59,14 @@ package Flyology_RDF.Triples is
 
 private
 
-   package Term_Holders is new Immutable_Holders
-     (Element_Type => Terms.Term,
-      "="          => Terms."=");
-
    package IRI_Holders is new Immutable_Holders
      (Element_Type => IRIs.IRI,
       "="          => IRIs."=");
 
-   type Triple (Initialized : Boolean) is record
-      Subject_Data   : Term_Holders.Holder;
-      Predicate_Data : IRI_Holders.Holder;
-      Object_Data    : Term_Holders.Holder;
+   type Triple is record
+      Subject_Data   : Terms.Term;
+      Predicate_Data : IRIs.IRI;
+      Object_Data    : Terms.Term;
    end record;
 
 end Flyology_RDF.Triples;

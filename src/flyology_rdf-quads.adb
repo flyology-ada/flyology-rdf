@@ -7,7 +7,7 @@ package body Flyology_RDF.Quads is
 
    function IRI_Graph (Value : IRIs.IRI) return Graph_Name is
      (Variant => IRI_Graph_Kind,
-      Value   => Term_Holders.To_Holder (Terms.IRI_Term (Value)));
+      Value   => Terms.IRI_Term (Value));
 
    function Blank_Node_Graph (Value : Terms.Term) return Graph_Name is
    begin
@@ -17,7 +17,7 @@ package body Flyology_RDF.Quads is
       end if;
       return
         (Variant => Blank_Node_Graph_Kind,
-         Value   => Term_Holders.To_Holder (Value));
+         Value   => Value);
    end Blank_Node_Graph;
 
    function Kind (Value : Graph_Name) return Graph_Name_Kind is
@@ -29,7 +29,7 @@ package body Flyology_RDF.Quads is
          raise Terms.Invalid_Term with
            "the default graph has no naming term";
       end if;
-      return Term_Holders.Element (Value.Value);
+      return Value.Value;
    end Name_Term;
 
    procedure Query_Name_Term
@@ -40,11 +40,10 @@ package body Flyology_RDF.Quads is
          raise Terms.Invalid_Term with
            "the default graph has no naming term";
       end if;
-      Term_Holders.Query_Element (Value.Value, Process);
+      Process (Value.Value);
    end Query_Name_Term;
 
    overriding function "=" (Left, Right : Graph_Name) return Boolean is
-      use type Term_Holders.Holder;
    begin
       if Left.Variant /= Right.Variant then
          return False;
@@ -54,7 +53,7 @@ package body Flyology_RDF.Quads is
          when Default_Graph_Kind =>
             return True;
          when IRI_Graph_Kind | Blank_Node_Graph_Kind =>
-            return Left.Value = Right.Value;
+            return Terms."=" (Left.Value, Right.Value);
       end case;
    end "=";
 
@@ -68,15 +67,13 @@ package body Flyology_RDF.Quads is
    function Create
      (Graph     : Graph_Name;
       Statement : Triples.Triple) return Quad
-   is (Initialized    => True,
-       Graph_Data     => Graph_Name_Holders.To_Holder (Graph),
-       Statement_Data => Triple_Holders.To_Holder (Statement));
+   is (Graph_Data => Graph, Statement_Data => Statement);
 
    function Graph (Value : Quad) return Graph_Name is
-     (Graph_Name_Holders.Element (Value.Graph_Data));
+     (Value.Graph_Data);
 
    function Statement (Value : Quad) return Triples.Triple is
-     (Triple_Holders.Element (Value.Statement_Data));
+     (Value.Statement_Data);
 
    function Subject (Value : Quad) return Terms.Term is
      (Triples.Subject (Statement (Value)));
@@ -95,39 +92,26 @@ package body Flyology_RDF.Quads is
          Predicate : IRIs.IRI;
          Object    : Terms.Term))
    is
-      procedure With_Graph (Graph : Graph_Name);
+      procedure With_Parts
+        (Subject   : Terms.Term;
+         Predicate : IRIs.IRI;
+         Object    : Terms.Term);
 
-      procedure With_Graph (Graph : Graph_Name) is
-         procedure With_Statement (Statement : Triples.Triple);
-
-         procedure With_Statement (Statement : Triples.Triple) is
-            procedure With_Parts
-              (Subject   : Terms.Term;
-               Predicate : IRIs.IRI;
-               Object    : Terms.Term);
-
-            procedure With_Parts
-              (Subject   : Terms.Term;
-               Predicate : IRIs.IRI;
-               Object    : Terms.Term) is
-            begin
-               Process (Graph, Subject, Predicate, Object);
-            end With_Parts;
-         begin
-            Triples.Query_Components (Statement, With_Parts'Access);
-         end With_Statement;
+      procedure With_Parts
+        (Subject   : Terms.Term;
+         Predicate : IRIs.IRI;
+         Object    : Terms.Term) is
       begin
-         Triple_Holders.Query_Element
-           (Value.Statement_Data, With_Statement'Access);
-      end With_Graph;
+         Process (Value.Graph_Data, Subject, Predicate, Object);
+      end With_Parts;
    begin
-      Graph_Name_Holders.Query_Element
-        (Value.Graph_Data, With_Graph'Access);
+      --  The graph name is held here, so only the statement's own parts
+      --  have to be handed over.
+      Triples.Query_Components (Value.Statement_Data, With_Parts'Access);
    end Query_Components;
 
    overriding function "=" (Left, Right : Quad) return Boolean is
-      use type Graph_Name_Holders.Holder;
-      use type Triple_Holders.Holder;
+      use type Triples.Triple;
    begin
       return Left.Graph_Data = Right.Graph_Data
         and then Left.Statement_Data = Right.Statement_Data;

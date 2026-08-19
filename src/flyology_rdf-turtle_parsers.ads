@@ -1,6 +1,8 @@
 private with Ada.Containers.Indefinite_Holders;
-private with Ada.Containers.Indefinite_Vectors;
+private with Ada.Containers.Vectors;
+private with Ada.Containers.Indefinite_Hashed_Maps;
 private with Ada.Containers.Indefinite_Ordered_Maps;
+private with Ada.Strings.Hash;
 private with Ada.Containers.Indefinite_Ordered_Sets;
 private with Ada.Strings.Unbounded;
 private with Flyology_RDF.IRIs;
@@ -287,10 +289,26 @@ private
 
    package Unbounded renames Ada.Strings.Unbounded;
 
-   package Token_Vectors is new Ada.Containers.Indefinite_Vectors
+   package Token_Vectors is new Ada.Containers.Vectors
      (Index_Type   => Positive,
       Element_Type => Lexers.Token,
       "="          => Lexers."=");
+
+   --  Admitting an IRI means parsing it, and a document says the same
+   --  IRIs over and over -- every predicate, every type, every datatype.
+   --  Holding the ones already admitted turns each repeat into a lookup
+   --  and a reference count bump. It is bounded, because a cache a
+   --  document can grow without limit is the same hazard as any other
+   --  unbounded buffer, and cleared whenever the base changes, since the
+   --  base is what a relative reference was resolved against.
+   Maximum_Cached_IRIs : constant := 4_096;
+
+   package IRI_Caches is new Ada.Containers.Indefinite_Hashed_Maps
+     (Key_Type        => String,
+      Element_Type    => IRIs.IRI,
+      Hash            => Ada.Strings.Hash,
+      Equivalent_Keys => "=",
+      "="             => IRIs."=");
 
    package Prefix_Maps is new Ada.Containers.Indefinite_Ordered_Maps
      (Key_Type     => String,
@@ -365,6 +383,7 @@ private
 
       Blank_Counter   : Natural := 0;
       Quad_Count      : Natural := 0;
+      IRI_Cache       : IRI_Caches.Map;
       Byte_Count      : Natural := 0;
       Work_Data       : Work_Statistics;
       Work_Units      : Natural := 0;

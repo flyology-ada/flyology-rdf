@@ -145,7 +145,7 @@ package Flyology_RDF.Lexers is
       Unexpected_Character);
 
    --  A scanned token.
-   type Token (<>) is private;
+   type Token is private;
 
    --  Report the token's lexical class.
    --  @param Value Token to inspect
@@ -248,7 +248,7 @@ private
 
    package Unbounded renames Ada.Strings.Unbounded;
 
-   type Token (Initialized : Boolean) is record
+   type Token (Initialized : Boolean := True) is record
       Kind_Value     : Token_Kind := Dot_Token;
       Text_Value     : Unbounded.Unbounded_String;
       Prefix_Value   : Unbounded.Unbounded_String;

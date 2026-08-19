@@ -1,4 +1,4 @@
-private with Ada.Strings.Unbounded;
+private with Flyology_RDF.Shared_Texts;
 
 --  Immutable RDF IRI values, represented by their exact validated UTF-8
 --  bytes.
@@ -27,7 +27,7 @@ package Flyology_RDF.IRIs is
 
    --  An immutable RDF IRI value. Equality compares the exact validated
    --  UTF-8 bytes and performs no Unicode or IRI normalisation.
-   type IRI (<>) is private;
+   type IRI is private;
 
    --  Construct an IRI from exact UTF-8 bytes.
    --  @param Value Bytes to validate and preserve
@@ -71,8 +71,10 @@ package Flyology_RDF.IRIs is
 
 private
 
-   type IRI (Initialized : Boolean) is record
-      Bytes : Ada.Strings.Unbounded.Unbounded_String;
+   --  Definite, so the types that carry an IRI can hold it directly
+   --  rather than in a holder that allocates a cell for it.
+   type IRI is record
+      Bytes : Shared_Texts.Text;
    end record;
 
 end Flyology_RDF.IRIs;

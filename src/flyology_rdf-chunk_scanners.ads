@@ -1,4 +1,4 @@
-with Ada.Containers.Indefinite_Vectors;
+with Ada.Containers.Vectors;
 
 with Flyology_RDF.Lexers;
 with Flyology_RDF.Parser_Cursors;
@@ -38,7 +38,7 @@ package Flyology_RDF.Chunk_Scanners is
    type Scan_Outcome is
      (Scanned, Malformed, Byte_Limit, Token_Limit, Token_Bytes_Limit);
 
-   package Token_Vectors is new Ada.Containers.Indefinite_Vectors
+   package Token_Vectors is new Ada.Containers.Vectors
      (Index_Type   => Positive,
       Element_Type => Lexers.Token,
       "="          => Lexers."=");
