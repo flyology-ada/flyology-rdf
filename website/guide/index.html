@@ -205,6 +205,10 @@ end On_Diagnostic;</code></pre></figure>
 --  Checkpoint_Calls, Maximum_Pending_Bytes,
 --  Maximum_Pending_Tokens</code></pre></figure>
             <aside class="callout"><span class="callout-symbol" aria-hidden="true">i</span><p><code>Maximum_Pending_Bytes</code> reports how much the parser held: the high-water mark of the buffer, which for well-formed input is one partial token. <code>Bytes_Scanned</code> counts bytes the scanner walked and <code>Bytes_Fed</code> counts bytes handed in. The first exceeds the second, because a token split across chunks is walked again when the rest of it arrives; their ratio is bounded. A ratio that grows with input size means scanning has become quadratic, which is what the scaling check in the benchmarks asserts against.</p></aside>
+            <p>Terms are immutable and are copied on every path that carries one, so their nodes are shared and reference counted rather than held by value: copying a term is an atomic increment, not a walk over its nodes. If your program uses no abort statements and no asynchronous transfer of control, adding the restrictions below lets the compiler drop the abort deferral it otherwise emits around every controlled finalization, which on a parse-heavy workload measured about 4 per cent here. They are configuration pragmas, so they are yours to set rather than the library's.</p>
+            <figure class="code-panel"><figcaption>optional, in your own configuration pragmas file</figcaption><button class="copy-button" type="button" data-copy>Copy</button><pre><code class="language-ada">pragma Restrictions (No_Abort_Statements);
+pragma Restrictions (Max_Asynchronous_Select_Nesting =&gt; 0);
+pragma Restrictions (No_Asynchronous_Control);</code></pre></figure>
           </section>
 <section id="terms">
             <span class="step-label">STEP 09</span>

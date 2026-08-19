@@ -1,4 +1,6 @@
 with Ada.Characters.Handling;
+with Ada.Unchecked_Deallocation;
+with System.Atomic_Counters;
 
 package body Flyology_RDF.Terms is
 
@@ -135,8 +137,29 @@ package body Flyology_RDF.Terms is
       return Subtag_Length /= 0;
    end Is_Well_Formed_Language;
 
+   procedure Free_Store is new Ada.Unchecked_Deallocation
+     (Object => Node_Store, Name => Node_Store_Access);
+
+   overriding procedure Adjust (Value : in out Term) is
+   begin
+      if Value.Store /= null then
+         System.Atomic_Counters.Increment (Value.Store.References);
+      end if;
+   end Adjust;
+
+   overriding procedure Finalize (Value : in out Term) is
+      Doomed : Node_Store_Access := Value.Store;
+   begin
+      Value.Store := null;
+      if Doomed /= null
+        and then System.Atomic_Counters.Decrement (Doomed.References)
+      then
+         Free_Store (Doomed);
+      end if;
+   end Finalize;
+
    function Root (Value : Term) return Term_Node is
-     (Value.Nodes.Last_Element);
+     (Value.Store.Items.Last_Element);
 
    procedure Require_Kind (Value : Term; Expected : Term_Kind) is
    begin
@@ -165,7 +188,8 @@ package body Flyology_RDF.Terms is
    function Single (Node : Term_Node) return Term is
       Result : Term (Initialized => True);
    begin
-      Result.Nodes.Append (Node);
+      Result.Store := new Node_Store;
+      Result.Store.Items.Append (Node);
       return Result;
    end Single;
 
@@ -301,8 +325,8 @@ package body Flyology_RDF.Terms is
       Object    : Term) return Term
    is
       Subject_Count : constant Positive :=
-        Positive (Subject.Nodes.Length);
-      Object_Count  : constant Positive := Positive (Object.Nodes.Length);
+        Positive (Subject.Store.Items.Length);
+      Object_Count  : constant Positive := Positive (Object.Store.Items.Length);
       Total         : constant Natural := Subject_Count + Object_Count + 1;
 
       Result_Depth : constant Natural :=
@@ -328,28 +352,29 @@ package body Flyology_RDF.Terms is
       --  Subject's nodes keep their indices; the object's shift by exactly
       --  the subject's size, so any triple node inside the object has to be
       --  renumbered as it is copied across.
-      Result.Nodes.Reserve_Capacity
+      Result.Store := new Node_Store;
+      Result.Store.Items.Reserve_Capacity
         (Ada.Containers.Count_Type (Total));
 
-      for Node of Subject.Nodes loop
-         Result.Nodes.Append (Node);
+      for Node of Subject.Store.Items loop
+         Result.Store.Items.Append (Node);
       end loop;
 
-      for Node of Object.Nodes loop
+      for Node of Object.Store.Items loop
          if Node.Variant = Triple_Term_Kind then
             declare
                Shifted : Term_Node := Node;
             begin
                Shifted.Subject_Node := Node.Subject_Node + Subject_Count;
                Shifted.Object_Node := Node.Object_Node + Subject_Count;
-               Result.Nodes.Append (Shifted);
+               Result.Store.Items.Append (Shifted);
             end;
          else
-            Result.Nodes.Append (Node);
+            Result.Store.Items.Append (Node);
          end if;
       end loop;
 
-      Result.Nodes.Append
+      Result.Store.Items.Append
         (Term_Node'
            (Variant        => Triple_Term_Kind,
             Subtree_Size   => Total,
@@ -429,23 +454,24 @@ package body Flyology_RDF.Terms is
    function Subtree (Value : Term; Index : Positive) return Term;
 
    function Subtree (Value : Term; Index : Positive) return Term is
-      Node   : constant Term_Node := Value.Nodes (Index);
+      Node   : constant Term_Node := Value.Store.Items (Index);
       First  : constant Positive := Index - Node.Subtree_Size + 1;
       Offset : constant Natural := First - 1;
       Result : Term (Initialized => True);
    begin
-      Result.Nodes.Reserve_Capacity
+      Result.Store := new Node_Store;
+      Result.Store.Items.Reserve_Capacity
         (Ada.Containers.Count_Type (Node.Subtree_Size));
 
       for Position in First .. Index loop
          declare
-            Current : Term_Node := Value.Nodes (Position);
+            Current : Term_Node := Value.Store.Items (Position);
          begin
             if Current.Variant = Triple_Term_Kind then
                Current.Subject_Node := Current.Subject_Node - Offset;
                Current.Object_Node := Current.Object_Node - Offset;
             end if;
-            Result.Nodes.Append (Current);
+            Result.Store.Items.Append (Current);
          end;
       end loop;
       return Result;
@@ -470,7 +496,7 @@ package body Flyology_RDF.Terms is
    end Triple_Object;
 
    function Node_Count (Value : Term) return Positive is
-     (Positive (Value.Nodes.Length));
+     (Positive (Value.Store.Items.Length));
 
    function Depth (Value : Term) return Natural is
      (Root (Value).Subtree_Depth);
@@ -494,9 +520,9 @@ package body Flyology_RDF.Terms is
          Predicate          : IRIs.IRI;
          Object_Node        : Node_ID)) return Node_ID is
    begin
-      for Index in Value.Nodes.First_Index .. Value.Nodes.Last_Index loop
+      for Index in Value.Store.Items.First_Index .. Value.Store.Items.Last_Index loop
          declare
-            Node : constant Term_Node := Value.Nodes (Index);
+            Node : constant Term_Node := Value.Store.Items (Index);
             Here : constant Node_ID := Node_ID (Index);
          begin
             case Node.Variant is
@@ -522,7 +548,7 @@ package body Flyology_RDF.Terms is
             end case;
          end;
       end loop;
-      return Node_ID (Value.Nodes.Last_Index);
+      return Node_ID (Value.Store.Items.Last_Index);
    end Visit_Nodes;
 
    function Same_Node (Left, Right : Term_Node) return Boolean;
@@ -560,12 +586,12 @@ package body Flyology_RDF.Terms is
       --  Both operands are built by the constructors above, which emit
       --  nodes in a canonical order, so equal terms have identical vectors
       --  and a positional comparison is exact rather than approximate.
-      if Left.Nodes.Length /= Right.Nodes.Length then
+      if Left.Store.Items.Length /= Right.Store.Items.Length then
          return False;
       end if;
 
-      for Index in Left.Nodes.First_Index .. Left.Nodes.Last_Index loop
-         if not Same_Node (Left.Nodes (Index), Right.Nodes (Index)) then
+      for Index in Left.Store.Items.First_Index .. Left.Store.Items.Last_Index loop
+         if not Same_Node (Left.Store.Items (Index), Right.Store.Items (Index)) then
             return False;
          end if;
       end loop;
