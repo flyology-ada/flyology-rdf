@@ -1,7 +1,103 @@
 with Flyology_IRI;
-with Flyology_RDF.Shared_Texts;
+with Ada.Unchecked_Deallocation;
+with System.Atomic_Counters;
 
 package body Flyology_RDF.IRIs is
+
+   procedure Free is new Ada.Unchecked_Deallocation
+     (Object => Shared_Bytes, Name => Shared_Bytes_Access);
+
+   --  A document names a great many distinct IRIs and drops them again,
+   --  so released blocks are kept and handed back out. They are held in a
+   --  few capacity classes, because a block serves any IRI that fits it;
+   --  anything longer than the largest class is allocated exactly and
+   --  freed on release, since those are rare and holding one would tie up
+   --  as much memory as all the small ones together.
+   --
+   --  The lists are per task, so no lock is needed: a block released by
+   --  another task simply joins that task's list, which is correct
+   --  because a free block belongs to nobody. Each is bounded so a burst
+   --  of IRIs is not held for the life of the process.
+   Class_Sizes : constant array (1 .. 4) of Natural := [32, 64, 128, 256];
+   Class_Limit : constant := 128;
+
+   type Class_Lists is array (Class_Sizes'Range) of Shared_Bytes_Access;
+   type Class_Counts is array (Class_Sizes'Range) of Natural;
+
+   Recycled       : Class_Lists := [others => null];
+   Recycled_Count : Class_Counts := [others => 0];
+   pragma Thread_Local_Storage (Recycled);
+   pragma Thread_Local_Storage (Recycled_Count);
+
+   function Class_For (Length : Natural) return Natural;
+   function Hold (Value : String) return IRI;
+
+   function Class_For (Length : Natural) return Natural is
+   begin
+      for Index in Class_Sizes'Range loop
+         if Length <= Class_Sizes (Index) then
+            return Index;
+         end if;
+      end loop;
+      return 0;
+   end Class_For;
+
+   function Hold (Value : String) return IRI is
+      Class : constant Natural := Class_For (Value'Length);
+      Block : Shared_Bytes_Access;
+   begin
+      if Class /= 0 and then Recycled (Class) /= null then
+         Block := Recycled (Class);
+         Recycled (Class) := Block.Next_Free;
+         Recycled_Count (Class) := Recycled_Count (Class) - 1;
+         Block.Next_Free := null;
+         System.Atomic_Counters.Initialize (Block.References);
+      elsif Class /= 0 then
+         Block := new Shared_Bytes (Capacity => Class_Sizes (Class));
+      else
+         Block := new Shared_Bytes (Capacity => Value'Length);
+      end if;
+
+      Block.Length := Value'Length;
+      Block.Data (1 .. Value'Length) := Value;
+
+      return Result : IRI do
+         Result.Payload := Block;
+      end return;
+   end Hold;
+
+   overriding procedure Adjust (Value : in out IRI) is
+   begin
+      if Value.Payload /= null then
+         System.Atomic_Counters.Increment (Value.Payload.References);
+      end if;
+   end Adjust;
+
+   overriding procedure Finalize (Value : in out IRI) is
+      Doomed : Shared_Bytes_Access := Value.Payload;
+      Class  : Natural;
+   begin
+      Value.Payload := null;
+      if Doomed = null
+        or else not System.Atomic_Counters.Decrement (Doomed.References)
+      then
+         return;
+      end if;
+
+      Class := Class_For (Doomed.Capacity);
+      if Class /= 0
+        and then Class_Sizes (Class) = Doomed.Capacity
+        and then Recycled_Count (Class) < Class_Limit
+      then
+         Doomed.Length := 0;
+         Doomed.Next_Free := Recycled (Class);
+         Recycled (Class) := Doomed;
+         Recycled_Count (Class) := Recycled_Count (Class) + 1;
+      else
+         Free (Doomed);
+      end if;
+   end Finalize;
+
 
    use type Flyology_IRI.Error_Kind;
 
@@ -180,7 +276,7 @@ package body Flyology_RDF.IRIs is
       end if;
 
       if Certainly_Absolute (Value) then
-         return (Bytes => Shared_Texts.To_Text (Value));
+         return Hold (Value);
       end if;
 
       --  Diagnose applies the same grammar Try_Parse does -- both are one
@@ -209,7 +305,7 @@ package body Flyology_RDF.IRIs is
       --  storing the input keeps that a property of this package rather than
       --  a standing assumption about another crate.
       return
-        (Bytes => Shared_Texts.To_Text (Value));
+        Hold (Value);
    end From_UTF_8;
 
    --  Whether Reference could contain a "." or ".." path segment. Such a
@@ -249,11 +345,11 @@ package body Flyology_RDF.IRIs is
         and then Admits (Reference)
       then
          return
-           (Bytes => Shared_Texts.To_Text (Reference));
+           Hold (Reference);
       end if;
 
       Flyology_IRI.Try_Parse
-        (Input      => Shared_Texts.To_String (Base.Bytes),
+        (Input      => To_UTF_8 (Base),
          Value      => Base_Reference,
          Error      => Base_Error,
          Syntax     => Flyology_IRI.IRI_Syntax,
@@ -281,14 +377,21 @@ package body Flyology_RDF.IRIs is
    end Resolve;
 
    function To_UTF_8 (Value : IRI) return String is
-     (Shared_Texts.To_String (Value.Bytes));
+     (if Value.Payload = null then ""
+      else Value.Payload.Data (1 .. Value.Payload.Length));
 
    function Byte_Length (Value : IRI) return Natural is
-     (Shared_Texts.Length (Value.Bytes));
+     (if Value.Payload = null then 0 else Value.Payload.Length);
 
    overriding function "=" (Left, Right : IRI) return Boolean is
    begin
-      return Shared_Texts."=" (Left.Bytes, Right.Bytes);
+      if Left.Payload = Right.Payload then
+         return True;
+      elsif Left.Payload = null or else Right.Payload = null then
+         return False;
+      end if;
+      return Left.Payload.Data (1 .. Left.Payload.Length)
+             = Right.Payload.Data (1 .. Right.Payload.Length);
    end "=";
 
 end Flyology_RDF.IRIs;

@@ -1,4 +1,5 @@
-private with Flyology_RDF.Shared_Texts;
+private with Ada.Finalization;
+private with System.Atomic_Counters;
 
 --  Immutable RDF IRI values, represented by their exact validated UTF-8
 --  bytes.
@@ -71,10 +72,34 @@ package Flyology_RDF.IRIs is
 
 private
 
-   --  Definite, so the types that carry an IRI can hold it directly
-   --  rather than in a holder that allocates a cell for it.
-   type IRI is record
-      Bytes : Shared_Texts.Text;
+   --  The bytes live in one heap block with a reference count, so
+   --  constructing an IRI costs a single allocation and copying one costs
+   --  an increment. The count is atomic, so a value may be copied from
+   --  several tasks; the bytes are never mutated, so sharing them is safe.
+   --
+   --  The block is held directly rather than through a shared-text value
+   --  of its own. Nesting one controlled type inside another meant every
+   --  copy and every release of an IRI ran two controlled operations
+   --  where one will do, and the runtime's bookkeeping around those is
+   --  the largest single cost in a parse.
+   --
+   --  Capacity is what was allocated, Length what is in use, so a
+   --  released block can serve any later IRI that fits it.
+   type Shared_Bytes;
+   type Shared_Bytes_Access is access Shared_Bytes;
+
+   type Shared_Bytes (Capacity : Natural) is limited record
+      References : System.Atomic_Counters.Atomic_Counter;
+      Next_Free  : Shared_Bytes_Access;
+      Length     : Natural := 0;
+      Data       : String (1 .. Capacity);
    end record;
+
+   type IRI is new Ada.Finalization.Controlled with record
+      Payload : Shared_Bytes_Access;
+   end record;
+
+   overriding procedure Adjust (Value : in out IRI);
+   overriding procedure Finalize (Value : in out IRI);
 
 end Flyology_RDF.IRIs;
