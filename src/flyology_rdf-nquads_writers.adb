@@ -181,7 +181,18 @@ package body Flyology_RDF.NQuads_Writers is
 
    procedure Put (Buffer : in out String; Last : in out Natural;
                   Item : String) is
+      --  The slice assignment below carries an implicit check on each
+      --  bound. One explicit test answers the same question once and
+      --  raises the same exception, so the implicit ones are turned off
+      --  for the assignment itself. The guarantee is stated here rather
+      --  than assumed: past this test the slice is inside Buffer.
+      pragma Suppress (Index_Check);
+      pragma Suppress (Range_Check);
+      pragma Suppress (Length_Check);
    begin
+      if Item'Length > Buffer'Last - Last then
+         raise Constraint_Error with "no room for the statement";
+      end if;
       Buffer (Last + 1 .. Last + Item'Length) := Item;
       Last := Last + Item'Length;
    end Put;
