@@ -248,10 +248,27 @@ private
 
    package Unbounded renames Ada.Strings.Unbounded;
 
+   --  A token's characters are short far more often than not: a local
+   --  name, a prefix, a short IRI. Holding them in the token means almost
+   --  no token allocates for its text, where every one used to. What does
+   --  not fit spills to the heap, so nothing is bounded away.
+   Inline_Text_Bytes   : constant := 64;
+   Inline_Prefix_Bytes : constant := 16;
+
+   type Held_Text (Capacity : Natural) is record
+      Fixed   : String (1 .. Capacity);
+      Count   : Natural := 0;
+      Spill   : Unbounded.Unbounded_String;
+      Spilled : Boolean := False;
+   end record;
+
+   subtype Token_Text is Held_Text (Inline_Text_Bytes);
+   subtype Token_Prefix is Held_Text (Inline_Prefix_Bytes);
+
    type Token (Initialized : Boolean := True) is record
       Kind_Value     : Token_Kind := Dot_Token;
-      Text_Value     : Unbounded.Unbounded_String;
-      Prefix_Value   : Unbounded.Unbounded_String;
+      Text_Value     : Token_Text;
+      Prefix_Value   : Token_Prefix;
       Form_Value     : String_Form := Short_Quoted;
       Quote_Value    : Quote_Character := '"';
       Has_Direction_Data : Boolean := False;
