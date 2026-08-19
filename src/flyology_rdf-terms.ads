@@ -321,8 +321,13 @@ private
    --  Definite, so a triple can hold three of these directly instead of
    --  wrapping each in a holder that allocates. The value is one pointer
    --  to the shared nodes, so holding it by value costs nothing.
+   --  Nearly every term is one node -- an IRI, a blank node, a literal --
+   --  and only a triple term nests. The single node is held here, so the
+   --  common term costs no allocation at all; Store carries the rest and
+   --  is null until a term actually needs more than one.
    type Term is
      new Ada.Finalization.Controlled with record
+      Solo  : Term_Node;
       Store : Node_Store_Access;
    end record;
 
