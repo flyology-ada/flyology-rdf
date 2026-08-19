@@ -13,6 +13,35 @@ package body Flyology_RDF.Turtle_Parsers is
       Free (Value.Data);
    end Finalize;
 
+   procedure Free is new Ada.Unchecked_Deallocation
+     (Object => String, Name => String_Access);
+
+   overriding procedure Finalize (Value : in out Byte_Buffer) is
+   begin
+      Value.Count := 0;
+      Free (Value.Data);
+   end Finalize;
+
+   --  Make room for Extra more bytes.
+   procedure Ensure_Byte_Room (Buffer : in out Byte_Buffer; Extra : Natural);
+
+   procedure Ensure_Byte_Room (Buffer : in out Byte_Buffer; Extra : Natural)
+   is
+      Needed : constant Natural := Buffer.Count + Extra;
+   begin
+      if Needed > Buffer.Data'Last then
+         declare
+            Bigger : constant String_Access :=
+              new String
+                (1 .. Positive'Max (Needed, 2 * Buffer.Data'Last));
+         begin
+            Bigger (1 .. Buffer.Count) := Buffer.Data (1 .. Buffer.Count);
+            Free (Buffer.Data);
+            Buffer.Data := Bigger;
+         end;
+      end if;
+   end Ensure_Byte_Room;
+
    --  Make room for one more token, so the scanner can build it in its
    --  slot. Reused slots are overwritten by the scan itself, which
    --  finalises whatever the previous statement left in them.
@@ -140,6 +169,7 @@ package body Flyology_RDF.Turtle_Parsers is
          Result.Checkpoint := Work_Checkpoint;
          --  Never null, so no access anywhere else need test for it.
          Result.Statement.Data := new Token_Array (1 .. 64);
+         Result.Pending.Data := new String (1 .. 4_096);
       end return;
    end Create;
 
@@ -1484,7 +1514,7 @@ package body Flyology_RDF.Turtle_Parsers is
       Target : in out Event_Sink'Class;
       Ended  : Boolean)
    is
-      Text     : constant String := Unbounded.To_String (Into.Pending);
+      Text     : String renames Into.Pending.Data (1 .. Into.Pending.Count);
       Position : Cursors.Cursor_State := Into.Pending_Origin;
       Index    : Positive := Text'First;
       Status   : Lexers.Scan_Status;
@@ -1624,17 +1654,26 @@ package body Flyology_RDF.Turtle_Parsers is
                  > Into.Limits_Data.Maximum_Token_Bytes
       then
          Report (Token_Limit, To_Span (Consumed_Position, Position));
-         Into.Pending := Unbounded.Null_Unbounded_String;
+         Into.Pending.Count := 0;
          Into.Pending_Origin := Consumed_Position;
          return;
       end if;
 
-      Into.Pending := Unbounded.To_Unbounded_String
-        (Text (Consumed_Index .. Text'Last));
+      declare
+         Kept : constant Natural := Text'Last - Consumed_Index + 1;
+      begin
+         --  Slide the unconsumed tail to the front of the buffer it is
+         --  already in; the next Feed appends after it.
+         if Kept > 0 and then Consumed_Index > 1 then
+            Into.Pending.Data (1 .. Kept) :=
+              Into.Pending.Data (Consumed_Index .. Text'Last);
+         end if;
+         Into.Pending.Count := Kept;
+      end;
       Into.Pending_Origin := Consumed_Position;
       Into.Work_Data.Maximum_Pending_Bytes :=
         Work_Count'Max (Into.Work_Data.Maximum_Pending_Bytes,
-                        Work_Count (Unbounded.Length (Into.Pending)));
+                        Work_Count (Into.Pending.Count));
    exception
       when others =>
          --  A sink callback raising must poison the parse, as the spec
@@ -1677,7 +1716,11 @@ package body Flyology_RDF.Turtle_Parsers is
 
       Into.Byte_Count := Into.Byte_Count + Bytes'Length;
 
-      Unbounded.Append (Into.Pending, Bytes);
+      Ensure_Byte_Room (Into.Pending, Bytes'Length);
+      Into.Pending.Data
+        (Into.Pending.Count + 1 .. Into.Pending.Count + Bytes'Length) :=
+        Bytes;
+      Into.Pending.Count := Into.Pending.Count + Bytes'Length;
       Deliver (Into, Target, Ended => False);
    end Feed;
 

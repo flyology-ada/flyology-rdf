@@ -304,6 +304,20 @@ private
 
    overriding procedure Finalize (Value : in out Statement_Buffer);
 
+   --  Bytes retained because they are a partial token, held in one heap
+   --  buffer that is reused from chunk to chunk. An Unbounded_String here
+   --  copied every chunk twice: once appending it, and once taking the
+   --  whole text back out to scan it.
+   type String_Access is access String;
+
+   type Byte_Buffer is
+     new Ada.Finalization.Limited_Controlled with record
+      Data  : String_Access;
+      Count : Natural := 0;
+   end record;
+
+   overriding procedure Finalize (Value : in out Byte_Buffer);
+
    --  Admitting an IRI means parsing it, and a document says the same
    --  IRIs over and over -- every predicate, every type, every datatype.
    --  Holding the ones already admitted turns each repeat into a lookup
@@ -357,7 +371,7 @@ private
       Checkpoint      : Work_Checkpoint_Access;
 
       --  Bytes retained because they are a partial token.
-      Pending         : Unbounded.Unbounded_String;
+      Pending         : Byte_Buffer;
       Pending_Origin  : Parser_Cursors.Cursor_State :=
         Parser_Cursors.Initial_State;
 
