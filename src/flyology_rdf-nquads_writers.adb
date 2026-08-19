@@ -303,16 +303,21 @@ package body Flyology_RDF.NQuads_Writers is
       Last   : in out Natural;
       Style  : String_Datatype_Style := Explicit_Datatype)
    is
-      Graph : constant Quads.Graph_Name := Quads.Graph (Value);
+      --  The parts are borrowed rather than copied out: each accessor
+      --  returns a reference counted value, so asking for four of them
+      --  per statement is four controlled operations for values that are
+      --  only read.
+      Graph : constant access constant Quads.Graph_Name :=
+        Quads.Graph_View (Value);
    begin
-      Put_Term (Buffer, Last, Quads.Subject (Value), Style);
+      Put_Term (Buffer, Last, Quads.Subject_View (Value).all, Style);
       Put (Buffer, Last, " ");
-      Put_IRI (Buffer, Last, Quads.Predicate (Value));
+      Put_IRI (Buffer, Last, Quads.Predicate_View (Value).all);
       Put (Buffer, Last, " ");
-      Put_Term (Buffer, Last, Quads.Object (Value), Style);
-      if Quads.Kind (Graph) /= Quads.Default_Graph_Kind then
+      Put_Term (Buffer, Last, Quads.Object_View (Value).all, Style);
+      if Quads.Kind (Graph.all) /= Quads.Default_Graph_Kind then
          Put (Buffer, Last, " ");
-         Put_Term (Buffer, Last, Quads.Name_Term (Graph), Style);
+         Put_Term (Buffer, Last, Quads.Name_Term (Graph.all), Style);
       end if;
       Put (Buffer, Last, " .");
    end Put_Quad;

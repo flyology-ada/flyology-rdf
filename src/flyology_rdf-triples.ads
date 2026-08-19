@@ -44,6 +44,21 @@ package Flyology_RDF.Triples is
    --  whole term, and a term may be an arbitrarily deep quoted triple.
    --  @param Value Triple to borrow from
    --  @param Process Callback receiving the three components
+   --  Views of the components, valid while Value is.
+   --
+   --  Subject and the rest hand back a copy, and a term and an IRI are
+   --  both reference counted, so a caller that only reads one still pays
+   --  the bookkeeping the runtime wraps a controlled operation in. These
+   --  lend the component where it lives.
+   --  @param Value Triple to view
+   --  @return The component
+   function Subject_View
+     (Value : Triple) return not null access constant Terms.Term;
+   function Predicate_View
+     (Value : Triple) return not null access constant IRIs.IRI;
+   function Object_View
+     (Value : Triple) return not null access constant Terms.Term;
+
    procedure Query_Components
      (Value   : Triple;
       Process : not null access procedure
@@ -64,9 +79,9 @@ private
       "="          => IRIs."=");
 
    type Triple is record
-      Subject_Data   : Terms.Term;
-      Predicate_Data : IRIs.IRI;
-      Object_Data    : Terms.Term;
+      Subject_Data   : aliased Terms.Term;
+      Predicate_Data : aliased IRIs.IRI;
+      Object_Data    : aliased Terms.Term;
    end record;
 
 end Flyology_RDF.Triples;

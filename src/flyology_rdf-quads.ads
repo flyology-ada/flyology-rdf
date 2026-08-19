@@ -109,6 +109,18 @@ package Flyology_RDF.Quads is
    --  statement.
    --  @param Value Quad to borrow from
    --  @param Process Callback receiving the four components
+   --  Views of the parts, valid while Value is. See Triples for why.
+   --  @param Value Quad to view
+   --  @return The part
+   function Subject_View
+     (Value : Quad) return not null access constant Terms.Term;
+   function Predicate_View
+     (Value : Quad) return not null access constant IRIs.IRI;
+   function Object_View
+     (Value : Quad) return not null access constant Terms.Term;
+   function Graph_View
+     (Value : Quad) return not null access constant Graph_Name;
+
    procedure Query_Components
      (Value   : Quad;
       Process : not null access procedure
@@ -140,8 +152,8 @@ private
    --  at them. The terms inside still share their nodes, so this stays a
    --  handful of pointers.
    type Quad is record
-      Graph_Data     : Graph_Name;
-      Statement_Data : Triples.Triple;
+      Graph_Data     : aliased Graph_Name;
+      Statement_Data : aliased Triples.Triple;
    end record;
 
 end Flyology_RDF.Quads;

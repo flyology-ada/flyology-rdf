@@ -84,6 +84,22 @@ package body Flyology_RDF.Quads is
    function Object (Value : Quad) return Terms.Term is
      (Triples.Object (Statement (Value)));
 
+   function Subject_View
+     (Value : Quad) return not null access constant Terms.Term
+   is (Triples.Subject_View (Value.Statement_Data));
+
+   function Predicate_View
+     (Value : Quad) return not null access constant IRIs.IRI
+   is (Triples.Predicate_View (Value.Statement_Data));
+
+   function Object_View
+     (Value : Quad) return not null access constant Terms.Term
+   is (Triples.Object_View (Value.Statement_Data));
+
+   function Graph_View
+     (Value : Quad) return not null access constant Graph_Name
+   is (Value.Graph_Data'Unchecked_Access);
+
    procedure Query_Components
      (Value   : Quad;
       Process : not null access procedure

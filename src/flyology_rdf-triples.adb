@@ -17,6 +17,18 @@ package body Flyology_RDF.Triples is
    function Object (Value : Triple) return Terms.Term is
      (Value.Object_Data);
 
+   function Subject_View
+     (Value : Triple) return not null access constant Terms.Term
+   is (Value.Subject_Data'Unchecked_Access);
+
+   function Predicate_View
+     (Value : Triple) return not null access constant IRIs.IRI
+   is (Value.Predicate_Data'Unchecked_Access);
+
+   function Object_View
+     (Value : Triple) return not null access constant Terms.Term
+   is (Value.Object_Data'Unchecked_Access);
+
    procedure Query_Components
      (Value   : Triple;
       Process : not null access procedure
