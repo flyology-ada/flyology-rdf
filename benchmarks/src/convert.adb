@@ -77,15 +77,16 @@ procedure Convert is
       Value  : Quads.Quad;
       Span   : Parsers.Source_Span)
    is
-      --  Write_Quad returns the statement without its terminator.
-      Line : constant String :=
-        Writers.Write_Quad (Value, Writers.Implicit_Datatype) & ASCII.LF;
+      --  A statement can be long; keep a margin rather than guess.
+      Margin : constant := 64 * 1024;
    begin
-      if Target.Held + Line'Length > Target.Buffer'Length then
+      if Target.Held + Margin > Target.Buffer'Length then
          Flush (Target);
       end if;
-      Target.Buffer (Target.Held + 1 .. Target.Held + Line'Length) := Line;
-      Target.Held := Target.Held + Line'Length;
+      Writers.Put_Quad
+        (Value, Target.Buffer, Target.Held, Writers.Implicit_Datatype);
+      Target.Held := Target.Held + 1;
+      Target.Buffer (Target.Held) := ASCII.LF;
       Target.Lines := Target.Lines + 1;
    end On_Quad;
 
