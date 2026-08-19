@@ -184,8 +184,13 @@ package body Flyology_RDF.Lexers is
    procedure Clear (Target : in out Held_Text) is
    begin
       Target.Count := 0;
-      Target.Spilled := False;
-      Target.Spill := Unbounded.Null_Unbounded_String;
+      if Target.Spilled then
+         --  Dropping the heap block only when one was taken keeps the
+         --  common case -- text that fit inline -- free of the controlled
+         --  assignment.
+         Target.Spilled := False;
+         Target.Spill := Unbounded.Null_Unbounded_String;
+      end if;
    end Clear;
 
    procedure Append_Scalar
@@ -1258,7 +1263,14 @@ package body Flyology_RDF.Lexers is
       end Scan_Name_Run;
 
    begin
-      Result := Null_Token;
+      --  Reset only what a previous occupant of Result could have left
+      --  behind and a consumer may read before Emit sets it: the texts,
+      --  and the direction flag. Everything else -- kind, form, quote,
+      --  positions -- is written on every path that makes it meaningful,
+      --  and Result is specified as meaningful only when Token_Found.
+      Clear (Result.Text_Value);
+      Clear (Result.Prefix_Value);
+      Result.Has_Direction_Data := False;
       Status := End_Of_Input;
       Error := No_Error;
 
