@@ -1,7 +1,5 @@
 with Ada.Characters.Handling;
 
-with Flyology_RDF.Byte_Runs;
-
 package body Flyology_RDF.Lexers is
 
    package Cursors renames Parser_Cursors;
@@ -315,18 +313,6 @@ package body Flyology_RDF.Lexers is
          Walk_Index := Walk_Index + By_Length;
       end Step;
 
-      --  Consume a run of plain one-byte scalars that Byte_Runs has
-      --  already classified, without decoding them again one at a time.
-      procedure Skip_Run (Count : Natural);
-
-      procedure Skip_Run (Count : Natural) is
-      begin
-         if Count > 0 then
-            Cursors.Advance_Run (Walk_Position, Count);
-            Walk_Index := Walk_Index + Count;
-         end if;
-      end Skip_Run;
-
       procedure Emit (Which : Token_Kind);
 
       procedure Emit (Which : Token_Kind) is
@@ -503,7 +489,6 @@ package body Flyology_RDF.Lexers is
                return;
             else
                Step (Scalar, Length);
-               Skip_Run (Byte_Runs.IRI_Run (Text, Walk_Index));
             end if;
          end loop;
       end Scan_IRI_Reference;
@@ -668,8 +653,6 @@ package body Flyology_RDF.Lexers is
                return;
             else
                Step (Scalar, Length);
-               Skip_Run
-                 (Byte_Runs.String_Run (Text, Walk_Index, Quote = 16#22#));
             end if;
          end loop;
       end Scan_String;
