@@ -176,8 +176,7 @@ package body Flyology_RDF.Terms is
    --  taking a reference into a term the caller keeps alive, not hiding
    --  an escape.
    function Item (Value : Term; Index : Positive) return Node_View is
-     (if Value.Store = null then Value.Solo'Unchecked_Access
-      else Value.Store.Items (Index)'Unchecked_Access);
+     (Value.Store.Items (Index)'Unchecked_Access);
 
    function Root (Value : Term) return Node_View is
      (Item (Value, Held_Count (Value)));
@@ -209,7 +208,8 @@ package body Flyology_RDF.Terms is
    function Single (Node : Term_Node) return Term is
       Result : Term;
    begin
-      Result.Solo := Node;
+      Result.Store := new Node_Store'(Count => 1, References => <>,
+                                      Items => (1 => Node));
       return Result;
    end Single;
 

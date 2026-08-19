@@ -325,9 +325,14 @@ private
    --  and only a triple term nests. The single node is held here, so the
    --  common term costs no allocation at all; Store carries the rest and
    --  is null until a term actually needs more than one.
+   --  The nodes are always shared, never held in the term itself. Holding
+   --  one inline saved an allocation but made copying a term copy the
+   --  node, and a node carries controlled components whose Adjust and
+   --  Finalize dominate a parse. A term is copied several times on its way
+   --  to a consumer and allocated once, so the allocation is the cheaper
+   --  side of that trade.
    type Term is
      new Ada.Finalization.Controlled with record
-      Solo  : aliased Term_Node;
       Store : Node_Store_Access;
    end record;
 
