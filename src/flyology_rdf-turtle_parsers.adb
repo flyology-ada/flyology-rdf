@@ -387,8 +387,7 @@ package body Flyology_RDF.Turtle_Parsers is
       function Expand (Value : Lexers.Token) return IRIs.IRI;
 
       function Expand (Value : Lexers.Token) return IRIs.IRI is
-         Key : constant String :=
-           Lexers.Prefix (Value) & ':' & Lexers.Text (Value);
+         Key : constant String := Lexers.Name (Value);
          Cached : constant IRI_Caches.Cursor :=
            Into.Name_Cache.Find (Key);
       begin
@@ -397,10 +396,13 @@ package body Flyology_RDF.Turtle_Parsers is
          end if;
 
          declare
-            --  One lookup, not a Contains and then an Element repeating
-            --  the same hash and the same comparison.
+            --  The parts of the name are slices of the key already in
+            --  hand, and the lookup is one Find, not a Contains and then
+            --  an Element repeating the same hash and comparison.
+            Colon : constant Positive :=
+              Key'First + Lexers.Prefix_Length (Value);
             Known : constant Prefix_Maps.Cursor :=
-              Into.Prefixes.Find (Lexers.Prefix (Value));
+              Into.Prefixes.Find (Key (Key'First .. Colon - 1));
          begin
             if not Prefix_Maps.Has_Element (Known) then
                Reject (Undefined_Prefix, IRI_Production);
@@ -413,7 +415,8 @@ package body Flyology_RDF.Turtle_Parsers is
                --  reference to the same IRI in one document is not the
                --  case to spend the hot path on.
                Reference : constant String :=
-                 Prefix_Maps.Element (Known) & Lexers.Text (Value);
+                 Prefix_Maps.Element (Known)
+                 & Key (Colon + 1 .. Key'Last);
                Admitted  : constant IRIs.IRI :=
                  (if Into.Base_Data.Is_Empty
                   then IRIs.From_UTF_8 (Reference)

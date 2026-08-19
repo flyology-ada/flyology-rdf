@@ -249,6 +249,31 @@ package body Flyology_RDF.Lexers is
    function Prefix (Value : Token) return String
    is (Lexers.Value (Value.Prefix_Value));
 
+   function Prefix_Length (Value : Token) return Natural
+   is (Length (Value.Prefix_Value));
+
+   function Name (Value : Token) return String is
+   begin
+      if not Value.Prefix_Value.Spilled
+        and then not Value.Text_Value.Spilled
+      then
+         declare
+            Prefix_Count : constant Natural := Value.Prefix_Value.Count;
+            Text_Count   : constant Natural := Value.Text_Value.Count;
+         begin
+            return Result : String (1 .. Prefix_Count + Text_Count + 1) do
+               Result (1 .. Prefix_Count) :=
+                 Value.Prefix_Value.Fixed (1 .. Prefix_Count);
+               Result (Prefix_Count + 1) := ':';
+               Result (Prefix_Count + 2 .. Result'Last) :=
+                 Value.Text_Value.Fixed (1 .. Text_Count);
+            end return;
+         end;
+      end if;
+      return Lexers.Value (Value.Prefix_Value)
+        & (':' & Lexers.Value (Value.Text_Value));
+   end Name;
+
    function Form (Value : Token) return String_Form is (Value.Form_Value);
 
    function Quote (Value : Token) return Quote_Character
