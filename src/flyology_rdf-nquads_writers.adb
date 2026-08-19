@@ -176,6 +176,22 @@ package body Flyology_RDF.NQuads_Writers is
    --  write it where it belongs, which for a conversion that streams is
    --  the difference between two copies of every statement and none.
 
+   --  One character, written where it goes. The general form below takes
+   --  a slice and tests both its bounds, which for a single character is
+   --  most of the work; a statement writes about ten of them.
+   procedure Put_One (Buffer : in out String; Last : in out Natural;
+                      Item : Character) with Inline;
+
+   procedure Put_One (Buffer : in out String; Last : in out Natural;
+                      Item : Character) is
+   begin
+      if Last >= Buffer'Last then
+         raise Constraint_Error with "no room for the statement";
+      end if;
+      Last := Last + 1;
+      Buffer (Last) := Item;
+   end Put_One;
+
    procedure Put (Buffer : in out String; Last : in out Natural;
                   Item : String);
 
@@ -218,7 +234,7 @@ package body Flyology_RDF.NQuads_Writers is
    is
       Text : constant String := IRIs.To_UTF_8 (Value);
    begin
-      Put (Buffer, Last, "<");
+      Put_One (Buffer, Last, '<');
       --  Almost every IRI needs nothing escaped, and for those this is one
       --  block move rather than a decision per byte.
       if (for all Item of Text => not Escapes_In_IRI (Item)) then
@@ -233,7 +249,7 @@ package body Flyology_RDF.NQuads_Writers is
             end if;
          end loop;
       end if;
-      Put (Buffer, Last, ">");
+      Put_One (Buffer, Last, '>');
    end Put_IRI;
 
    procedure Put_Term (Buffer : in out String; Last : in out Natural;
@@ -266,7 +282,7 @@ package body Flyology_RDF.NQuads_Writers is
             Put (Buffer, Last, """");
 
             if Terms.Has_Language (Value) then
-               Put (Buffer, Last, "@");
+               Put_One (Buffer, Last, '@');
                Put (Buffer, Last, Terms.Language (Value));
                if Terms.Has_Direction (Value) then
                   Put (Buffer, Last,
@@ -289,9 +305,9 @@ package body Flyology_RDF.NQuads_Writers is
          when Terms.Triple_Term_Kind =>
             Put (Buffer, Last, "<<(");
             Put_Term (Buffer, Last, Terms.Triple_Subject (Value), Style);
-            Put (Buffer, Last, " ");
+            Put_One (Buffer, Last, ' ');
             Put_IRI (Buffer, Last, Terms.Triple_Predicate (Value));
-            Put (Buffer, Last, " ");
+            Put_One (Buffer, Last, ' ');
             Put_Term (Buffer, Last, Terms.Triple_Object (Value), Style);
             Put (Buffer, Last, ")>>");
       end case;
@@ -311,12 +327,12 @@ package body Flyology_RDF.NQuads_Writers is
         Quads.Graph_View (Value);
    begin
       Put_Term (Buffer, Last, Quads.Subject_View (Value).all, Style);
-      Put (Buffer, Last, " ");
+      Put_One (Buffer, Last, ' ');
       Put_IRI (Buffer, Last, Quads.Predicate_View (Value).all);
-      Put (Buffer, Last, " ");
+      Put_One (Buffer, Last, ' ');
       Put_Term (Buffer, Last, Quads.Object_View (Value).all, Style);
       if Quads.Kind (Graph.all) /= Quads.Default_Graph_Kind then
-         Put (Buffer, Last, " ");
+         Put_One (Buffer, Last, ' ');
          Put_Term (Buffer, Last, Quads.Name_Term (Graph.all), Style);
       end if;
       Put (Buffer, Last, " .");
