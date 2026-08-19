@@ -53,7 +53,15 @@ package body Flyology_RDF.Terms is
 
    function Is_Well_Formed_Language (Value : String) return Boolean;
 
-   function Root (Value : Term) return Term_Node;
+   --  A borrowed view of one node, valid only while the term it came
+   --  from is. Inspection runs several times per statement, and returning
+   --  the node by value made each look a deep copy: an Adjust and a
+   --  Finalize of every controlled payload inside, wrapped in the
+   --  runtime's per-object finalization bookkeeping. A view costs one
+   --  pointer.
+   type Node_View is access constant Term_Node;
+
+   function Root (Value : Term) return Node_View;
 
    procedure Require_Kind (Value : Term; Expected : Term_Kind);
 
@@ -163,10 +171,15 @@ package body Flyology_RDF.Terms is
    function Held_Count (Value : Term) return Positive is
      (if Value.Store = null then 1 else Value.Store.Count);
 
-   function Item (Value : Term; Index : Positive) return Term_Node is
-     (if Value.Store = null then Value.Solo else Value.Store.Items (Index));
+   --  The borrow never outlives the call that made it: every use below
+   --  dereferences the view before returning, so Unchecked_Access is
+   --  taking a reference into a term the caller keeps alive, not hiding
+   --  an escape.
+   function Item (Value : Term; Index : Positive) return Node_View is
+     (if Value.Store = null then Value.Solo'Unchecked_Access
+      else Value.Store.Items (Index)'Unchecked_Access);
 
-   function Root (Value : Term) return Term_Node is
+   function Root (Value : Term) return Node_View is
      (Item (Value, Held_Count (Value)));
 
    procedure Require_Kind (Value : Term; Expected : Term_Kind) is
@@ -362,22 +375,22 @@ package body Flyology_RDF.Terms is
       Result.Store := new Node_Store (Count => Total);
 
       for Offset in 1 .. Subject_Count loop
-         Result.Store.Items (Offset) := Item (Subject, Offset);
+         Result.Store.Items (Offset) := Item (Subject, Offset).all;
       end loop;
 
       for Offset in 1 .. Object_Count loop
          declare
-            Node  : constant Term_Node := Item (Object, Offset);
+            Node  : constant Node_View := Item (Object, Offset);
             Where : constant Positive := Subject_Count + Offset;
          begin
             if Node.Variant = Triple_Term_Kind then
-               Result.Store.Items (Where) := Node;
+               Result.Store.Items (Where) := Node.all;
                Result.Store.Items (Where).Subject_Node :=
                  Node.Subject_Node + Subject_Count;
                Result.Store.Items (Where).Object_Node :=
                  Node.Object_Node + Subject_Count;
             else
-               Result.Store.Items (Where) := Node;
+               Result.Store.Items (Where) := Node.all;
             end if;
          end;
       end loop;
@@ -462,7 +475,7 @@ package body Flyology_RDF.Terms is
    function Subtree (Value : Term; Index : Positive) return Term;
 
    function Subtree (Value : Term; Index : Positive) return Term is
-      Node   : constant Term_Node := Item (Value, Index);
+      Node   : constant Node_View := Item (Value, Index);
       First  : constant Positive := Index - Node.Subtree_Size + 1;
       Offset : constant Natural := First - 1;
       Result : Term;
@@ -471,7 +484,7 @@ package body Flyology_RDF.Terms is
 
       for Position in First .. Index loop
          declare
-            Current : Term_Node := Item (Value, Position);
+            Current : Term_Node := Item (Value, Position).all;
          begin
             if Current.Variant = Triple_Term_Kind then
                Current.Subject_Node := Current.Subject_Node - Offset;
@@ -528,7 +541,7 @@ package body Flyology_RDF.Terms is
    begin
       for Index in 1 .. Held_Count (Value) loop
          declare
-            Node : constant Term_Node := Item (Value, Index);
+            Node : constant Node_View := Item (Value, Index);
             Here : constant Node_ID := Node_ID (Index);
          begin
             case Node.Variant is
@@ -557,9 +570,9 @@ package body Flyology_RDF.Terms is
       return Node_ID (Held_Count (Value));
    end Visit_Nodes;
 
-   function Same_Node (Left, Right : Term_Node) return Boolean;
+   function Same_Node (Left, Right : Node_View) return Boolean;
 
-   function Same_Node (Left, Right : Term_Node) return Boolean is
+   function Same_Node (Left, Right : Node_View) return Boolean is
       use type Unbounded.Unbounded_String;
       use type IRIs.IRI;
    begin
