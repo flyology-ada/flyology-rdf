@@ -405,15 +405,30 @@ package body Flyology_RDF.Turtle_Parsers is
             if not Prefix_Maps.Has_Element (Known) then
                Reject (Undefined_Prefix, IRI_Production);
             end if;
-            return Admitted : constant IRIs.IRI := Resolve
-              (Prefix_Maps.Element (Known) & Lexers.Text (Value),
-               IRI_Production)
-            do
+            declare
+               --  Admitted directly rather than through Resolve: the
+               --  IRI cache there is keyed by the full expansion, and a
+               --  name that missed the name cache would pay that hash
+               --  only to miss again -- a prefixed name and a written-out
+               --  reference to the same IRI in one document is not the
+               --  case to spend the hot path on.
+               Reference : constant String :=
+                 Prefix_Maps.Element (Known) & Lexers.Text (Value);
+               Admitted  : constant IRIs.IRI :=
+                 (if Into.Base_Data.Is_Empty
+                  then IRIs.From_UTF_8 (Reference)
+                  else IRIs.Resolve (Into.Base_Data.Element, Reference));
+            begin
                if Natural (Into.Name_Cache.Length) < Maximum_Cached_Names
                then
                   Into.Name_Cache.Insert (Key, Admitted);
                end if;
-            end return;
+               return Admitted;
+            end;
+         exception
+            when IRIs.Invalid_IRI | IRIs.Invalid_UTF_8 =>
+               Reject (Invalid_IRI, IRI_Production);
+               raise;
          end;
       end Expand;
 
