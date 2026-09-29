@@ -1,4 +1,5 @@
 with "flyology_iri.gpr";
+with "flyology_simd.gpr";
 
 project Flyology_RDF is
 

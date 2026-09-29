@@ -1,8 +1,128 @@
 with Ada.Characters.Handling;
+with Interfaces;
+
+with Flyology_SIMD;
+with Flyology_SIMD.Backends.Native;
 
 package body Flyology_RDF.Lexers is
 
    package Cursors renames Parser_Cursors;
+
+   package SIMD renames Flyology_SIMD;
+   package Vector renames Flyology_SIMD.Backends.Native;
+
+   use type Interfaces.Unsigned_16;
+
+   ----------------------------------------------------------------------
+   --  Vector classification of an ASCII byte class
+   ----------------------------------------------------------------------
+
+   --  Sixteen bytes are classified at once by the two-table nibble method:
+   --  one table maps a byte's low nibble to the set of high nibbles that
+   --  complete a member of the class, the other maps its high nibble to a
+   --  single bit, and a byte is a member exactly when the two agree. Each
+   --  table is one NEON tbl, so the whole classification is four vector
+   --  operations regardless of how many bytes it decides.
+   --
+   --  Every high nibble from 8 upwards maps to zero, so no byte outside
+   --  ASCII is ever a member and the scalar loop keeps sole authority over
+   --  multi-byte sequences.
+   Lane_Width : constant := 16;
+
+   High_Nibble_Bits : constant SIMD.Lane_Values_8x16 :=
+     [16#01#, 16#02#, 16#04#, 16#08#, 16#10#, 16#20#, 16#40#, 16#80#,
+      0, 0, 0, 0, 0, 0, 0, 0];
+
+   --  A-Z, a-z, 0-9, '_' and '-': the name characters that need no
+   --  decision beyond their own identity. Dot, colon, percent and
+   --  backslash are deliberately absent, because each of them means
+   --  something the scalar loop has to weigh.
+   Simple_Name_Low_Bits : constant SIMD.Lane_Values_8x16 :=
+     [16#A8#, 16#F8#, 16#F8#, 16#F8#, 16#F8#, 16#F8#, 16#F8#, 16#F8#,
+      16#F8#, 16#F8#, 16#F0#, 16#50#, 16#50#, 16#54#, 16#50#, 16#70#];
+
+   High_Nibble_Table : constant SIMD.U8x16 :=
+     Vector.From_Lanes (High_Nibble_Bits);
+   Simple_Name_Table : constant SIMD.U8x16 :=
+     Vector.From_Lanes (Simple_Name_Low_Bits);
+   Nibble_Mask       : constant SIMD.U8x16 := Vector.Splat (16#0F#);
+   Zero_Vector       : constant SIMD.U8x16 := Vector.Zero;
+
+   --  Index of the lowest set bit, or 16 when none is set.
+   function Lowest_Set (Bits : Interfaces.Unsigned_16) return Natural;
+
+   function Lowest_Set (Bits : Interfaces.Unsigned_16) return Natural is
+      use Interfaces;
+      Rest  : Unsigned_16 := Bits;
+      Count : Natural := 0;
+   begin
+      if Rest = 0 then
+         return Lane_Width;
+      end if;
+      if (Rest and 16#00FF#) = 0 then
+         Count := Count + 8;
+         Rest := Shift_Right (Rest, 8);
+      end if;
+      if (Rest and 16#000F#) = 0 then
+         Count := Count + 4;
+         Rest := Shift_Right (Rest, 4);
+      end if;
+      if (Rest and 16#0003#) = 0 then
+         Count := Count + 2;
+         Rest := Shift_Right (Rest, 2);
+      end if;
+      if (Rest and 16#0001#) = 0 then
+         Count := Count + 1;
+      end if;
+      return Count;
+   end Lowest_Set;
+
+   --  How many of the sixteen bytes at Index, counted from the first, are
+   --  members of the class the table describes. Sixteen bytes must be
+   --  present; the caller checks that and runs the scalar loop otherwise.
+   function Class_Run
+     (Text  : String;
+      Index : Positive;
+      Table : SIMD.U8x16) return Natural
+     with Inline;
+
+   function Class_Run
+     (Text  : String;
+      Index : Positive;
+      Table : SIMD.U8x16) return Natural
+   is
+      Bytes : SIMD.Byte_Array (0 .. Text'Length - 1);
+      for Bytes'Address use Text'Address;
+      pragma Import (Ada, Bytes);
+
+      Block : constant SIMD.U8x16 :=
+        Vector.Load_Unaligned (Bytes, Index - Text'First);
+      Member : constant SIMD.U8x16 :=
+        Vector.Bitwise_And
+          (Vector.Table_Lookup
+             (Table, Vector.Bitwise_And (Block, Nibble_Mask)),
+           Vector.Table_Lookup
+             (High_Nibble_Table, Vector.Shift_Right_Logical (Block, 4)));
+   begin
+      return Lowest_Set
+        (Vector.To_Bit_Mask (Vector.Equal (Member, Zero_Vector)));
+   end Class_Run;
+
+   --  Move a position past Count bytes that are known to be ASCII and to
+   --  contain no line break, which is what the vector classes guarantee.
+   procedure Advance_Plain_Run
+     (State : in out Cursors.Cursor_State;
+      Count : Positive)
+     with Inline;
+
+   procedure Advance_Plain_Run
+     (State : in out Cursors.Cursor_State;
+      Count : Positive) is
+   begin
+      State.Byte_Offset := State.Byte_Offset + Count;
+      State.Column := State.Column + Count;
+      State.After_Carriage_Return := False;
+   end Advance_Plain_Run;
 
    use type Cursors.Decode_Status;
 
@@ -602,6 +722,30 @@ package body Flyology_RDF.Lexers is
          Run_Start : Positive := Walk_Index;
       begin
          loop
+            --  A whole vector of plain name bytes at once. The class the
+            --  vector decides is a strict subset of what the loop below
+            --  accepts in a continuing position, so a run it finds needs
+            --  no further decision and each byte in it may legally end the
+            --  name. Anything else stops the run and the scalar loop, which
+            --  remains the authority, decides what the byte means.
+            if Walk_Index + Lane_Width - 1 <= Text'Last
+              and then not (First and then Text (Walk_Index) = '-')
+            then
+               declare
+                  Run : constant Natural :=
+                    Class_Run (Text, Walk_Index, Simple_Name_Table);
+               begin
+                  if Run > 0 then
+                     Advance_Plain_Run (Walk_Position, Run);
+                     Walk_Index := Walk_Index + Run;
+                     Good_Position := Walk_Position;
+                     Good_Index := Walk_Index;
+                     First := False;
+                     goto Continue;
+                  end if;
+               end;
+            end if;
+
             Peek_Token_End (Walk_Index, Scalar, Length, Look);
 
             if Look = Partial then
